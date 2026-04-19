@@ -1,0 +1,1358 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KidBeats 🎵</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;700;800;900&family=Fredoka+One&display=swap');
+
+:root {
+–bg: #0d0d1a;
+–card: #1a1a2e;
+–card2: #16213e;
+–pink: #ff6ec7;
+–yellow: #ffe94d;
+–cyan: #4dffef;
+–green: #7fff6e;
+–orange: #ff9a3c;
+–purple: #b06eff;
+–text: #ffffff;
+–subtext: #aab0cc;
+–radius: 20px;
+–glow-pink: 0 0 18px #ff6ec7aa;
+–glow-cyan: 0 0 18px #4dffefaa;
+–glow-yellow: 0 0 18px #ffe94daa;
+–glow-green: 0 0 18px #7fff6eaa;
+}
+
+- { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+font-family: ‘Nunito’, sans-serif;
+background: var(–bg);
+color: var(–text);
+min-height: 100vh;
+overflow-x: hidden;
+padding-bottom: 40px;
+}
+
+/* Animated background stars */
+body::before {
+content: ‘’;
+position: fixed;
+inset: 0;
+background-image:
+radial-gradient(1px 1px at 10% 20%, rgba(255,255,255,0.5) 0%, transparent 100%),
+radial-gradient(1px 1px at 40% 60%, rgba(255,255,255,0.3) 0%, transparent 100%),
+radial-gradient(2px 2px at 70% 15%, rgba(255,255,255,0.4) 0%, transparent 100%),
+radial-gradient(1px 1px at 85% 75%, rgba(255,255,255,0.3) 0%, transparent 100%),
+radial-gradient(1px 1px at 55% 45%, rgba(255,255,255,0.2) 0%, transparent 100%),
+radial-gradient(2px 2px at 25% 85%, rgba(255,255,255,0.3) 0%, transparent 100%),
+radial-gradient(1px 1px at 90% 40%, rgba(255,255,255,0.4) 0%, transparent 100%);
+pointer-events: none;
+z-index: 0;
+}
+
+.app-wrap {
+position: relative;
+z-index: 1;
+max-width: 900px;
+margin: 0 auto;
+padding: 0 16px;
+}
+
+/* HEADER */
+header {
+text-align: center;
+padding: 28px 0 16px;
+}
+
+.logo {
+font-family: ‘Fredoka One’, cursive;
+font-size: 3.2rem;
+background: linear-gradient(135deg, var(–pink), var(–yellow), var(–cyan));
+-webkit-background-clip: text;
+-webkit-text-fill-color: transparent;
+background-clip: text;
+letter-spacing: 2px;
+animation: logoGlow 3s ease-in-out infinite alternate;
+}
+
+@keyframes logoGlow {
+from { filter: drop-shadow(0 0 8px #ff6ec7); }
+to { filter: drop-shadow(0 0 20px #4dffef); }
+}
+
+.tagline {
+color: var(–subtext);
+font-size: 1rem;
+font-weight: 700;
+margin-top: 4px;
+letter-spacing: 1px;
+}
+
+/* VISUALIZER BAR */
+.visualizer {
+display: flex;
+align-items: flex-end;
+justify-content: center;
+gap: 4px;
+height: 60px;
+margin: 16px 0;
+padding: 0 20px;
+}
+
+.viz-bar {
+width: 8px;
+border-radius: 4px 4px 0 0;
+background: var(–pink);
+transition: height 0.1s ease;
+animation: vizIdle 1.5s ease-in-out infinite alternate;
+}
+
+.viz-bar:nth-child(2n) { background: var(–cyan); animation-delay: 0.1s; }
+.viz-bar:nth-child(3n) { background: var(–yellow); animation-delay: 0.2s; }
+.viz-bar:nth-child(4n) { background: var(–green); animation-delay: 0.15s; }
+.viz-bar:nth-child(5n) { background: var(–purple); animation-delay: 0.25s; }
+
+@keyframes vizIdle {
+from { height: 4px; }
+to { height: 16px; }
+}
+
+.viz-bar.active { animation: vizActive 0.15s ease-in-out infinite alternate; }
+@keyframes vizActive {
+from { height: 8px; }
+to { height: 52px; }
+}
+
+/* PANELS GRID */
+.grid {
+display: grid;
+grid-template-columns: 1fr 1fr;
+gap: 16px;
+margin-top: 8px;
+}
+
+.panel {
+background: var(–card);
+border-radius: var(–radius);
+padding: 20px;
+border: 1.5px solid rgba(255,255,255,0.06);
+position: relative;
+overflow: hidden;
+}
+
+.panel::before {
+content: ‘’;
+position: absolute;
+top: 0; left: 0; right: 0;
+height: 3px;
+border-radius: var(–radius) var(–radius) 0 0;
+}
+
+.panel.pink::before { background: linear-gradient(90deg, var(–pink), var(–purple)); }
+.panel.cyan::before { background: linear-gradient(90deg, var(–cyan), var(–green)); }
+.panel.yellow::before { background: linear-gradient(90deg, var(–yellow), var(–orange)); }
+.panel.purple::before { background: linear-gradient(90deg, var(–purple), var(–pink)); }
+
+.panel-title {
+font-family: ‘Fredoka One’, cursive;
+font-size: 1.2rem;
+margin-bottom: 14px;
+display: flex;
+align-items: center;
+gap: 8px;
+}
+
+.panel-title .emoji { font-size: 1.4rem; }
+
+/* BEAT PADS */
+.beat-grid {
+display: grid;
+grid-template-columns: repeat(3, 1fr);
+gap: 10px;
+}
+
+.beat-pad {
+aspect-ratio: 1;
+border-radius: 14px;
+border: none;
+cursor: pointer;
+font-size: 1.5rem;
+display: flex;
+flex-direction: column;
+align-items: center;
+justify-content: center;
+gap: 4px;
+font-family: ‘Nunito’, sans-serif;
+font-weight: 800;
+font-size: 0.65rem;
+letter-spacing: 0.5px;
+text-transform: uppercase;
+transition: transform 0.08s, box-shadow 0.08s;
+position: relative;
+overflow: hidden;
+user-select: none;
+-webkit-tap-highlight-color: transparent;
+}
+
+.beat-pad .pad-emoji { font-size: 1.6rem; }
+
+.beat-pad:active, .beat-pad.playing {
+transform: scale(0.92);
+}
+
+.beat-pad.playing::after {
+content: ‘’;
+position: absolute;
+inset: 0;
+background: rgba(255,255,255,0.25);
+animation: padFlash 0.18s ease-out forwards;
+}
+
+@keyframes padFlash {
+from { opacity: 1; }
+to { opacity: 0; }
+}
+
+.beat-pad[data-color=“pink”] { background: linear-gradient(145deg, #ff6ec7, #c94ea0); color: white; box-shadow: 0 4px 16px #ff6ec755; }
+.beat-pad[data-color=“cyan”] { background: linear-gradient(145deg, #4dffef, #1ac9bb); color: #0d0d1a; box-shadow: 0 4px 16px #4dffef55; }
+.beat-pad[data-color=“yellow”] { background: linear-gradient(145deg, #ffe94d, #e0c800); color: #0d0d1a; box-shadow: 0 4px 16px #ffe94d55; }
+.beat-pad[data-color=“green”] { background: linear-gradient(145deg, #7fff6e, #4dc940); color: #0d0d1a; box-shadow: 0 4px 16px #7fff6e55; }
+.beat-pad[data-color=“purple”] { background: linear-gradient(145deg, #b06eff, #7c3fd6); color: white; box-shadow: 0 4px 16px #b06eff55; }
+.beat-pad[data-color=“orange”] { background: linear-gradient(145deg, #ff9a3c, #e06b00); color: white; box-shadow: 0 4px 16px #ff9a3c55; }
+
+/* VOICE RECORDER */
+.record-btn {
+width: 80px;
+height: 80px;
+border-radius: 50%;
+border: none;
+background: linear-gradient(145deg, #ff6ec7, #c94ea0);
+cursor: pointer;
+display: flex;
+align-items: center;
+justify-content: center;
+font-size: 2rem;
+margin: 0 auto 12px;
+box-shadow: 0 0 0 0 rgba(255,110,199,0.4);
+transition: transform 0.1s;
+animation: recordPulse 2s ease-in-out infinite;
+}
+
+@keyframes recordPulse {
+0%, 100% { box-shadow: 0 0 0 0 rgba(255,110,199,0.4); }
+50% { box-shadow: 0 0 0 14px rgba(255,110,199,0); }
+}
+
+.record-btn.recording {
+background: linear-gradient(145deg, #ff4444, #cc0000);
+animation: recordingPulse 0.6s ease-in-out infinite;
+}
+
+@keyframes recordingPulse {
+0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255,68,68,0.5); }
+50% { transform: scale(1.08); box-shadow: 0 0 0 16px rgba(255,68,68,0); }
+}
+
+.record-status {
+text-align: center;
+font-weight: 800;
+font-size: 0.85rem;
+color: var(–subtext);
+margin-bottom: 10px;
+}
+
+.record-status.active { color: #ff6ec7; }
+
+.effect-pills {
+display: flex;
+flex-wrap: wrap;
+gap: 6px;
+justify-content: center;
+}
+
+.effect-pill {
+background: rgba(255,255,255,0.08);
+border: 1.5px solid rgba(255,255,255,0.12);
+border-radius: 20px;
+padding: 5px 12px;
+font-size: 0.75rem;
+font-weight: 800;
+cursor: pointer;
+transition: all 0.15s;
+color: var(–subtext);
+}
+
+.effect-pill:hover { border-color: var(–pink); color: var(–pink); background: rgba(255,110,199,0.1); }
+.effect-pill.active { background: var(–pink); border-color: var(–pink); color: white; box-shadow: var(–glow-pink); }
+
+/* AI PANEL */
+.ai-panel {
+grid-column: 1 / -1;
+}
+
+.ai-input-row {
+display: flex;
+gap: 10px;
+margin-bottom: 14px;
+}
+
+.ai-input {
+flex: 1;
+background: rgba(255,255,255,0.06);
+border: 1.5px solid rgba(255,255,255,0.12);
+border-radius: 14px;
+padding: 12px 16px;
+color: white;
+font-family: ‘Nunito’, sans-serif;
+font-size: 0.95rem;
+font-weight: 700;
+outline: none;
+transition: border-color 0.2s;
+}
+
+.ai-input::placeholder { color: var(–subtext); }
+.ai-input:focus { border-color: var(–yellow); }
+
+.ai-btn {
+background: linear-gradient(135deg, var(–yellow), var(–orange));
+border: none;
+border-radius: 14px;
+padding: 12px 20px;
+font-family: ‘Fredoka One’, cursive;
+font-size: 1rem;
+color: #0d0d1a;
+cursor: pointer;
+transition: transform 0.1s, box-shadow 0.1s;
+white-space: nowrap;
+box-shadow: var(–glow-yellow);
+}
+
+.ai-btn:hover { transform: translateY(-2px); }
+.ai-btn:active { transform: scale(0.96); }
+.ai-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+
+.ai-output {
+background: rgba(255,233,77,0.06);
+border: 1.5px solid rgba(255,233,77,0.18);
+border-radius: 14px;
+padding: 14px 16px;
+font-size: 0.9rem;
+line-height: 1.6;
+color: var(–text);
+min-height: 60px;
+position: relative;
+}
+
+.ai-output.loading::after {
+content: ‘’;
+position: absolute;
+top: 50%;
+left: 50%;
+transform: translate(-50%, -50%);
+width: 28px;
+height: 28px;
+border: 3px solid rgba(255,233,77,0.3);
+border-top-color: var(–yellow);
+border-radius: 50%;
+animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin { to { transform: translate(-50%, -50%) rotate(360deg); } }
+
+.ai-placeholder { color: var(–subtext); font-style: italic; }
+
+.ai-tags {
+display: flex;
+flex-wrap: wrap;
+gap: 6px;
+margin-top: 10px;
+}
+
+.ai-tag {
+background: rgba(255,233,77,0.15);
+border: 1px solid rgba(255,233,77,0.3);
+border-radius: 20px;
+padding: 4px 10px;
+font-size: 0.75rem;
+font-weight: 800;
+color: var(–yellow);
+cursor: pointer;
+transition: all 0.15s;
+}
+
+.ai-tag:hover { background: var(–yellow); color: #0d0d1a; }
+
+/* SFX PANEL */
+.sfx-grid {
+display: grid;
+grid-template-columns: repeat(4, 1fr);
+gap: 8px;
+}
+
+.sfx-btn {
+background: rgba(255,255,255,0.06);
+border: 1.5px solid rgba(255,255,255,0.1);
+border-radius: 12px;
+padding: 10px 6px;
+font-size: 1.4rem;
+cursor: pointer;
+display: flex;
+flex-direction: column;
+align-items: center;
+gap: 4px;
+transition: all 0.12s;
+font-family: ‘Nunito’, sans-serif;
+color: var(–subtext);
+font-weight: 800;
+font-size: 0.6rem;
+text-transform: uppercase;
+letter-spacing: 0.3px;
+-webkit-tap-highlight-color: transparent;
+}
+
+.sfx-btn .sfx-icon { font-size: 1.5rem; }
+
+.sfx-btn:hover { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.25); color: white; transform: scale(1.05); }
+.sfx-btn:active { transform: scale(0.94); }
+.sfx-btn.pop { border-color: var(–pink); color: var(–pink); box-shadow: var(–glow-pink); background: rgba(255,110,199,0.08); }
+
+/* TRACK MIXER */
+.track-list {
+display: flex;
+flex-direction: column;
+gap: 8px;
+}
+
+.track-item {
+display: flex;
+align-items: center;
+gap: 10px;
+background: rgba(255,255,255,0.04);
+border-radius: 12px;
+padding: 10px 12px;
+border: 1px solid rgba(255,255,255,0.06);
+}
+
+.track-icon { font-size: 1.2rem; min-width: 28px; text-align: center; }
+
+.track-name {
+flex: 1;
+font-weight: 800;
+font-size: 0.85rem;
+}
+
+.track-vol {
+width: 80px;
+-webkit-appearance: none;
+height: 6px;
+border-radius: 3px;
+background: rgba(255,255,255,0.15);
+outline: none;
+}
+
+.track-vol::-webkit-slider-thumb {
+-webkit-appearance: none;
+width: 16px;
+height: 16px;
+border-radius: 50%;
+background: var(–cyan);
+cursor: pointer;
+box-shadow: 0 0 8px var(–cyan);
+}
+
+.track-mute {
+width: 32px;
+height: 32px;
+border-radius: 8px;
+border: 1.5px solid rgba(255,255,255,0.15);
+background: transparent;
+color: var(–subtext);
+cursor: pointer;
+font-size: 1rem;
+display: flex;
+align-items: center;
+justify-content: center;
+transition: all 0.15s;
+}
+
+.track-mute.muted { background: rgba(255,68,68,0.2); border-color: #ff4444; }
+
+.track-bar-wrap {
+flex: 1;
+height: 6px;
+background: rgba(255,255,255,0.08);
+border-radius: 3px;
+overflow: hidden;
+}
+
+.track-bar {
+height: 100%;
+border-radius: 3px;
+width: 0%;
+transition: width 0.1s;
+}
+
+/* PLAY CONTROLS */
+.play-controls {
+display: flex;
+align-items: center;
+justify-content: center;
+gap: 14px;
+margin-top: 20px;
+padding: 16px;
+background: var(–card);
+border-radius: var(–radius);
+border: 1.5px solid rgba(255,255,255,0.06);
+}
+
+.ctrl-btn {
+width: 48px;
+height: 48px;
+border-radius: 14px;
+border: none;
+background: rgba(255,255,255,0.08);
+color: white;
+font-size: 1.2rem;
+cursor: pointer;
+display: flex;
+align-items: center;
+justify-content: center;
+transition: all 0.15s;
+}
+
+.ctrl-btn:hover { background: rgba(255,255,255,0.15); transform: scale(1.05); }
+
+.play-main {
+width: 64px;
+height: 64px;
+border-radius: 50%;
+border: none;
+background: linear-gradient(135deg, var(–cyan), var(–green));
+color: #0d0d1a;
+font-size: 1.5rem;
+cursor: pointer;
+display: flex;
+align-items: center;
+justify-content: center;
+box-shadow: var(–glow-cyan);
+transition: all 0.15s;
+}
+
+.play-main:hover { transform: scale(1.08); box-shadow: 0 0 30px #4dffef99; }
+.play-main:active { transform: scale(0.95); }
+
+.bpm-display {
+font-family: ‘Fredoka One’, cursive;
+font-size: 1.1rem;
+color: var(–cyan);
+min-width: 70px;
+text-align: center;
+}
+
+.bpm-ctrl {
+display: flex;
+align-items: center;
+gap: 6px;
+}
+
+.bpm-btn {
+width: 28px;
+height: 28px;
+border-radius: 8px;
+border: 1.5px solid rgba(77,255,239,0.3);
+background: transparent;
+color: var(–cyan);
+font-size: 1rem;
+cursor: pointer;
+display: flex;
+align-items: center;
+justify-content: center;
+transition: all 0.12s;
+}
+
+.bpm-btn:hover { background: rgba(77,255,239,0.1); }
+
+/* NOTIFICATION */
+.notif {
+position: fixed;
+bottom: 24px;
+left: 50%;
+transform: translateX(-50%) translateY(100px);
+background: rgba(30,30,50,0.97);
+border: 1.5px solid rgba(255,255,255,0.1);
+border-radius: 14px;
+padding: 12px 22px;
+font-weight: 800;
+font-size: 0.9rem;
+transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+z-index: 1000;
+white-space: nowrap;
+box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+
+.notif.show { transform: translateX(-50%) translateY(0); }
+
+/* SECTION LABEL */
+.section-sep {
+text-align: center;
+font-family: ‘Fredoka One’, cursive;
+font-size: 0.85rem;
+color: var(–subtext);
+letter-spacing: 2px;
+text-transform: uppercase;
+margin: 20px 0 12px;
+display: flex;
+align-items: center;
+gap: 12px;
+}
+
+.section-sep::before, .section-sep::after {
+content: ‘’;
+flex: 1;
+height: 1px;
+background: rgba(255,255,255,0.08);
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+.grid { grid-template-columns: 1fr; }
+.ai-panel { grid-column: 1; }
+.logo { font-size: 2.4rem; }
+.sfx-grid { grid-template-columns: repeat(4, 1fr); }
+.beat-grid { grid-template-columns: repeat(3, 1fr); }
+.play-controls { flex-wrap: wrap; gap: 10px; }
+}
+</style>
+
+</head>
+<body>
+<div class="app-wrap">
+
+  <header>
+    <div class="logo">🎵 KidBeats</div>
+    <div class="tagline">Make awesome music — no lessons needed!</div>
+  </header>
+
+  <!-- Visualizer -->
+
+  <div class="visualizer" id="visualizer">
+    <!-- Bars generated by JS -->
+  </div>
+
+  <div class="section-sep">🥁 Beat Pads</div>
+  <div class="grid">
+
+```
+<!-- BEAT PADS -->
+<div class="panel cyan">
+  <div class="panel-title"><span class="emoji">🥁</span> Tap The Beats</div>
+  <div class="beat-grid" id="beatGrid">
+    <button class="beat-pad" data-color="pink" data-sound="kick"><span class="pad-emoji">💥</span>Kick</button>
+    <button class="beat-pad" data-color="cyan" data-sound="snare"><span class="pad-emoji">🥁</span>Snare</button>
+    <button class="beat-pad" data-color="yellow" data-sound="hihat"><span class="pad-emoji">🔔</span>Hi-Hat</button>
+    <button class="beat-pad" data-color="green" data-sound="clap"><span class="pad-emoji">👏</span>Clap</button>
+    <button class="beat-pad" data-color="purple" data-sound="tom"><span class="pad-emoji">🪘</span>Tom</button>
+    <button class="beat-pad" data-color="orange" data-sound="cowbell"><span class="pad-emoji">🔔</span>Cowbell</button>
+  </div>
+</div>
+
+<!-- VOICE RECORDER -->
+<div class="panel pink">
+  <div class="panel-title"><span class="emoji">🎤</span> Your Voice</div>
+  <button class="record-btn" id="recordBtn">🎤</button>
+  <div class="record-status" id="recordStatus">Tap to record!</div>
+  <div class="effect-pills" id="effectPills">
+    <button class="effect-pill" data-effect="normal">Normal</button>
+    <button class="effect-pill active" data-effect="robot">🤖 Robot</button>
+    <button class="effect-pill" data-effect="chipmunk">🐿 Chipmunk</button>
+    <button class="effect-pill" data-effect="deep">👾 Deep</button>
+    <button class="effect-pill" data-effect="echo">🌊 Echo</button>
+  </div>
+</div>
+```
+
+  </div>
+
+  <div class="section-sep">✨ AI Producer</div>
+  <div class="grid">
+
+```
+<!-- AI PANEL -->
+<div class="panel yellow ai-panel">
+  <div class="panel-title"><span class="emoji">🤖</span> AI Music Buddy</div>
+  <div class="ai-input-row">
+    <input class="ai-input" id="aiInput" type="text" placeholder="Describe your song... (e.g. spooky Halloween with robots)" maxlength="200" />
+    <button class="ai-btn" id="aiBtn" onclick="askAI()">✨ Make It!</button>
+  </div>
+  <div class="ai-output" id="aiOutput">
+    <span class="ai-placeholder">Type something above and I'll help make your song amazing! 🎵</span>
+  </div>
+  <div class="ai-tags" id="aiTags">
+    <span class="ai-tag" onclick="setPrompt('happy birthday party song')">🎂 Birthday</span>
+    <span class="ai-tag" onclick="setPrompt('super fast racing car music')">🏎️ Racing</span>
+    <span class="ai-tag" onclick="setPrompt('spooky Halloween ghosts')">👻 Halloween</span>
+    <span class="ai-tag" onclick="setPrompt('underwater ocean adventure')">🌊 Ocean</span>
+    <span class="ai-tag" onclick="setPrompt('silly dinosaur dance party')">🦕 Dinos</span>
+    <span class="ai-tag" onclick="setPrompt('outer space rocket ship')">🚀 Space</span>
+  </div>
+</div>
+```
+
+  </div>
+
+  <div class="section-sep">🎉 Sound Effects</div>
+  <div class="grid">
+
+```
+<!-- SFX -->
+<div class="panel purple">
+  <div class="panel-title"><span class="emoji">🎉</span> Sound FX</div>
+  <div class="sfx-grid" id="sfxGrid">
+    <button class="sfx-btn" data-sfx="laser"><span class="sfx-icon">⚡</span>Laser</button>
+    <button class="sfx-btn" data-sfx="boing"><span class="sfx-icon">🏀</span>Boing</button>
+    <button class="sfx-btn" data-sfx="warp"><span class="sfx-icon">🌀</span>Warp</button>
+    <button class="sfx-btn" data-sfx="jingle"><span class="sfx-icon">✨</span>Sparkle</button>
+    <button class="sfx-btn" data-sfx="scratch"><span class="sfx-icon">🎚️</span>Scratch</button>
+    <button class="sfx-btn" data-sfx="horn"><span class="sfx-icon">📯</span>Horn</button>
+    <button class="sfx-btn" data-sfx="woosh"><span class="sfx-icon">💨</span>Woosh</button>
+    <button class="sfx-btn" data-sfx="zap"><span class="sfx-icon">🔮</span>Zap</button>
+  </div>
+</div>
+
+<!-- TRACK MIXER -->
+<div class="panel cyan">
+  <div class="panel-title"><span class="emoji">🎛️</span> My Tracks</div>
+  <div class="track-list" id="trackList">
+    <div class="track-item" id="track-beats">
+      <span class="track-icon">🥁</span>
+      <span class="track-name">Beats</span>
+      <div class="track-bar-wrap"><div class="track-bar" style="background: var(--cyan); width: 0%" id="bar-beats"></div></div>
+      <input type="range" class="track-vol" value="80" min="0" max="100" oninput="setVolume('beats', this.value)">
+      <button class="track-mute" onclick="toggleMute('beats', this)">🔊</button>
+    </div>
+    <div class="track-item" id="track-voice">
+      <span class="track-icon">🎤</span>
+      <span class="track-name">Voice</span>
+      <div class="track-bar-wrap"><div class="track-bar" style="background: var(--pink); width: 0%" id="bar-voice"></div></div>
+      <input type="range" class="track-vol" value="80" min="0" max="100" oninput="setVolume('voice', this.value)">
+      <button class="track-mute" onclick="toggleMute('voice', this)">🔊</button>
+    </div>
+    <div class="track-item" id="track-sfx">
+      <span class="track-icon">🎉</span>
+      <span class="track-name">FX</span>
+      <div class="track-bar-wrap"><div class="track-bar" style="background: var(--purple); width: 0%" id="bar-sfx"></div></div>
+      <input type="range" class="track-vol" value="80" min="0" max="100" oninput="setVolume('sfx', this.value)">
+      <button class="track-mute" onclick="toggleMute('sfx', this)">🔊</button>
+    </div>
+  </div>
+</div>
+```
+
+  </div>
+
+  <!-- PLAY CONTROLS -->
+
+  <div class="play-controls">
+    <div class="bpm-ctrl">
+      <button class="bpm-btn" onclick="changeBPM(-5)">−</button>
+      <div class="bpm-display" id="bpmDisplay">120 BPM</div>
+      <button class="bpm-btn" onclick="changeBPM(5)">+</button>
+    </div>
+    <button class="ctrl-btn" onclick="stopAll()" title="Stop">⏹️</button>
+    <button class="play-main" id="playBtn" onclick="togglePlay()">▶️</button>
+    <button class="ctrl-btn" onclick="clearAll()" title="Clear all">🗑️</button>
+    <button class="ctrl-btn" onclick="saveProject()" title="Save">💾</button>
+  </div>
+
+</div>
+
+<!-- Notification -->
+
+<div class="notif" id="notif"></div>
+
+<script>
+// ================================
+// AUDIO ENGINE
+// ================================
+let audioCtx = null;
+let bpm = 120;
+let isPlaying = false;
+let beatInterval = null;
+let stepIndex = 0;
+let volumes = { beats: 0.8, voice: 0.8, sfx: 0.8 };
+let muted = { beats: false, voice: false, sfx: false };
+let activeEffect = 'robot';
+let isRecording = false;
+let mediaRecorder = null;
+let recordedChunks = [];
+let recordedBuffer = null;
+let sequencerSteps = {};
+
+function getCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+
+// ================================
+// SYNTH SOUNDS (no files needed)
+// ================================
+function playDrumSound(type) {
+  const ctx = getCtx();
+  const t = ctx.currentTime;
+  
+  switch(type) {
+    case 'kick': {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.frequency.setValueAtTime(180, t);
+      osc.frequency.exponentialRampToValueAtTime(0.001, t + 0.4);
+      gain.gain.setValueAtTime(1.2, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+      osc.start(t); osc.stop(t + 0.4);
+      break;
+    }
+    case 'snare': {
+      const bufferSize = ctx.sampleRate * 0.15;
+      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1);
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      const gain = ctx.createGain();
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'highpass'; filter.frequency.value = 1000;
+      source.connect(filter); filter.connect(gain); gain.connect(ctx.destination);
+      gain.gain.setValueAtTime(0.9, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+      source.start(t);
+      break;
+    }
+    case 'hihat': {
+      const bufferSize = ctx.sampleRate * 0.05;
+      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1);
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      const gain = ctx.createGain();
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'highpass'; filter.frequency.value = 8000;
+      source.connect(filter); filter.connect(gain); gain.connect(ctx.destination);
+      gain.gain.setValueAtTime(0.6, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+      source.start(t);
+      break;
+    }
+    case 'clap': {
+      for (let i = 0; i < 3; i++) {
+        const bufferSize = ctx.sampleRate * 0.08;
+        const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let j = 0; j < bufferSize; j++) data[j] = (Math.random() * 2 - 1);
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+        const gain = ctx.createGain();
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'bandpass'; filter.frequency.value = 1200; filter.Q.value = 0.5;
+        source.connect(filter); filter.connect(gain); gain.connect(ctx.destination);
+        gain.gain.setValueAtTime(0.7, t + i * 0.012);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + i * 0.012 + 0.08);
+        source.start(t + i * 0.012);
+      }
+      break;
+    }
+    case 'tom': {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.frequency.setValueAtTime(100, t);
+      osc.frequency.exponentialRampToValueAtTime(40, t + 0.3);
+      gain.gain.setValueAtTime(0.9, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+      osc.start(t); osc.stop(t + 0.3);
+      break;
+    }
+    case 'cowbell': {
+      const osc1 = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc1.connect(gain); osc2.connect(gain); gain.connect(ctx.destination);
+      osc1.frequency.value = 540; osc2.frequency.value = 800;
+      osc1.type = 'square'; osc2.type = 'square';
+      gain.gain.setValueAtTime(0.4, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+      osc1.start(t); osc2.start(t);
+      osc1.stop(t + 0.5); osc2.stop(t + 0.5);
+      break;
+    }
+  }
+  flashVisualizerActive();
+  updateTrackBar('beats');
+}
+
+function playSFX(type) {
+  const ctx = getCtx();
+  const t = ctx.currentTime;
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(volumes.sfx, t);
+  gain.connect(ctx.destination);
+
+  switch(type) {
+    case 'laser': {
+      const osc = ctx.createOscillator();
+      osc.connect(gain);
+      osc.frequency.setValueAtTime(1200, t);
+      osc.frequency.exponentialRampToValueAtTime(100, t + 0.3);
+      osc.type = 'sawtooth';
+      gain.gain.setValueAtTime(0.4, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+      osc.start(t); osc.stop(t + 0.3);
+      break;
+    }
+    case 'boing': {
+      const osc = ctx.createOscillator();
+      osc.connect(gain);
+      osc.frequency.setValueAtTime(200, t);
+      osc.frequency.exponentialRampToValueAtTime(800, t + 0.15);
+      osc.frequency.exponentialRampToValueAtTime(200, t + 0.5);
+      osc.type = 'sine';
+      gain.gain.setValueAtTime(0.5, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+      osc.start(t); osc.stop(t + 0.5);
+      break;
+    }
+    case 'warp': {
+      const osc = ctx.createOscillator();
+      osc.connect(gain);
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(50, t);
+      osc.frequency.linearRampToValueAtTime(2000, t + 0.6);
+      gain.gain.setValueAtTime(0.3, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+      osc.start(t); osc.stop(t + 0.6);
+      break;
+    }
+    case 'jingle': {
+      const notes = [880, 1100, 1320, 1760];
+      notes.forEach((freq, i) => {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.connect(g); g.connect(ctx.destination);
+        o.frequency.value = freq;
+        o.type = 'sine';
+        g.gain.setValueAtTime(0.3, t + i * 0.08);
+        g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.08 + 0.2);
+        o.start(t + i * 0.08); o.stop(t + i * 0.08 + 0.2);
+      });
+      break;
+    }
+    case 'scratch': {
+      const bufferSize = ctx.sampleRate * 0.25;
+      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = (Math.random() * 2 - 1) * Math.sin(i / bufferSize * Math.PI * 6) * 0.5;
+      }
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'bandpass'; filter.frequency.value = 800;
+      source.connect(filter); filter.connect(gain);
+      gain.gain.setValueAtTime(0.8, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+      source.start(t);
+      break;
+    }
+    case 'horn': {
+      const freqs = [220, 330, 440];
+      freqs.forEach(f => {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.connect(g); g.connect(ctx.destination);
+        o.frequency.value = f; o.type = 'square';
+        g.gain.setValueAtTime(0.15, t);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+        o.start(t); o.stop(t + 0.4);
+      });
+      break;
+    }
+    case 'woosh': {
+      const bufferSize = ctx.sampleRate * 0.3;
+      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1);
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(200, t);
+      filter.frequency.exponentialRampToValueAtTime(4000, t + 0.15);
+      filter.frequency.exponentialRampToValueAtTime(200, t + 0.3);
+      source.connect(filter); filter.connect(gain);
+      gain.gain.setValueAtTime(0.6, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+      source.start(t);
+      break;
+    }
+    case 'zap': {
+      const osc = ctx.createOscillator();
+      osc.connect(gain);
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(600, t);
+      osc.frequency.exponentialRampToValueAtTime(50, t + 0.2);
+      gain.gain.setValueAtTime(0.4, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+      osc.start(t); osc.stop(t + 0.2);
+      break;
+    }
+  }
+  flashVisualizerActive();
+  updateTrackBar('sfx');
+  const btn = document.querySelector(`[data-sfx="${type}"]`);
+  if (btn) { btn.classList.add('pop'); setTimeout(() => btn.classList.remove('pop'), 300); }
+}
+
+// ================================
+// VISUALIZER
+// ================================
+const vizWrap = document.getElementById('visualizer');
+const NUM_BARS = 32;
+for (let i = 0; i < NUM_BARS; i++) {
+  const bar = document.createElement('div');
+  bar.className = 'viz-bar';
+  bar.style.height = (4 + Math.random() * 10) + 'px';
+  vizWrap.appendChild(bar);
+}
+
+function flashVisualizerActive() {
+  const bars = document.querySelectorAll('.viz-bar');
+  bars.forEach(b => {
+    b.classList.add('active');
+    b.style.height = (8 + Math.random() * 44) + 'px';
+  });
+  setTimeout(() => {
+    bars.forEach(b => {
+      b.classList.remove('active');
+      b.style.height = (4 + Math.random() * 12) + 'px';
+    });
+  }, 180);
+}
+
+// Idle viz animation
+setInterval(() => {
+  if (!isPlaying) {
+    const bars = document.querySelectorAll('.viz-bar');
+    bars.forEach(b => {
+      b.style.height = (3 + Math.random() * 12) + 'px';
+    });
+  }
+}, 400);
+
+// ================================
+// BEAT PADS
+// ================================
+document.querySelectorAll('.beat-pad').forEach(pad => {
+  pad.addEventListener('click', () => {
+    const sound = pad.dataset.sound;
+    playDrumSound(sound);
+    pad.classList.add('playing');
+    setTimeout(() => pad.classList.remove('playing'), 200);
+  });
+});
+
+// ================================
+// VOICE RECORDING
+// ================================
+const recordBtn = document.getElementById('recordBtn');
+const recordStatus = document.getElementById('recordStatus');
+
+recordBtn.addEventListener('click', async () => {
+  if (isRecording) {
+    stopRecording();
+  } else {
+    startRecording();
+  }
+});
+
+async function startRecording() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(stream);
+    recordedChunks = [];
+    mediaRecorder.ondataavailable = e => recordedChunks.push(e.data);
+    mediaRecorder.onstop = async () => {
+      const blob = new Blob(recordedChunks, { type: 'audio/webm' });
+      const arrayBuffer = await blob.arrayBuffer();
+      const ctx = getCtx();
+      try {
+        recordedBuffer = await ctx.decodeAudioData(arrayBuffer);
+        showNotif('🎤 Voice recorded! Hit play to hear it!');
+        updateTrackBar('voice');
+      } catch(e) {
+        showNotif('😅 Could not decode audio, try again!');
+      }
+      stream.getTracks().forEach(t => t.stop());
+    };
+    mediaRecorder.start();
+    isRecording = true;
+    recordBtn.classList.add('recording');
+    recordBtn.textContent = '⏹️';
+    recordStatus.textContent = '● Recording...';
+    recordStatus.classList.add('active');
+  } catch(err) {
+    showNotif('🎤 Microphone not available');
+  }
+}
+
+function stopRecording() {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
+  isRecording = false;
+  recordBtn.classList.remove('recording');
+  recordBtn.textContent = '🎤';
+  recordStatus.textContent = 'Tap to record!';
+  recordStatus.classList.remove('active');
+}
+
+function playRecordedVoice() {
+  if (!recordedBuffer || muted.voice) return;
+  const ctx = getCtx();
+  const source = ctx.createBufferSource();
+  source.buffer = recordedBuffer;
+
+  let node = source;
+  const gainNode = ctx.createGain();
+  gainNode.gain.value = volumes.voice;
+
+  if (activeEffect === 'chipmunk') {
+    source.playbackRate.value = 1.8;
+  } else if (activeEffect === 'deep') {
+    source.playbackRate.value = 0.5;
+  } else if (activeEffect === 'robot') {
+    const waveshaper = ctx.createWaveShaper();
+    const n = 256, curve = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const x = i * 2 / n - 1;
+      curve[i] = (Math.PI + 100) * x / (Math.PI + 100 * Math.abs(x));
+    }
+    waveshaper.curve = curve;
+    source.connect(waveshaper);
+    waveshaper.connect(gainNode);
+    gainNode.connect(ctx.destination);
+    source.start();
+    return;
+  } else if (activeEffect === 'echo') {
+    const delay = ctx.createDelay(1.0);
+    delay.delayTime.value = 0.35;
+    const feedback = ctx.createGain();
+    feedback.gain.value = 0.4;
+    source.connect(gainNode);
+    gainNode.connect(delay);
+    delay.connect(feedback);
+    feedback.connect(delay);
+    delay.connect(ctx.destination);
+    gainNode.connect(ctx.destination);
+    source.start();
+    return;
+  }
+
+  node.connect(gainNode);
+  gainNode.connect(ctx.destination);
+  node.start();
+  flashVisualizerActive();
+}
+
+// Effect pills
+document.querySelectorAll('.effect-pill').forEach(pill => {
+  pill.addEventListener('click', () => {
+    document.querySelectorAll('.effect-pill').forEach(p => p.classList.remove('active'));
+    pill.classList.add('active');
+    activeEffect = pill.dataset.effect;
+    showNotif('Effect: ' + pill.textContent);
+  });
+});
+
+// ================================
+// SFX
+// ================================
+document.querySelectorAll('.sfx-btn').forEach(btn => {
+  btn.addEventListener('click', () => playSFX(btn.dataset.sfx));
+});
+
+// ================================
+// PLAY / STOP
+// ================================
+let playStep = 0;
+function togglePlay() {
+  isPlaying = !isPlaying;
+  const btn = document.getElementById('playBtn');
+  if (isPlaying) {
+    btn.textContent = '⏸️';
+    runSequencer();
+    showNotif('🎵 Playing your track!');
+  } else {
+    btn.textContent = '▶️';
+    clearInterval(beatInterval);
+    showNotif('⏸ Paused');
+  }
+}
+
+function runSequencer() {
+  const interval = (60 / bpm / 2) * 1000;
+  beatInterval = setInterval(() => {
+    playStep++;
+    // Occasionally trigger a beat to simulate loop
+    if (playStep % 2 === 0) {
+      const beats = ['kick', 'hihat', 'snare', 'hihat'];
+      const b = beats[playStep % beats.length];
+      if (!muted.beats) playDrumSound(b);
+    }
+    if (playStep % 8 === 0 && recordedBuffer) {
+      if (!muted.voice) playRecordedVoice();
+    }
+    flashVisualizerActive();
+  }, interval);
+}
+
+function stopAll() {
+  isPlaying = false;
+  clearInterval(beatInterval);
+  document.getElementById('playBtn').textContent = '▶️';
+  playStep = 0;
+  showNotif('⏹ Stopped');
+}
+
+function clearAll() {
+  stopAll();
+  recordedBuffer = null;
+  recordStatus.textContent = 'Tap to record!';
+  ['beats','voice','sfx'].forEach(t => document.getElementById('bar-' + t).style.width = '0%');
+  showNotif('🗑️ Cleared all tracks!');
+}
+
+// ================================
+// BPM
+// ================================
+function changeBPM(delta) {
+  bpm = Math.max(60, Math.min(200, bpm + delta));
+  document.getElementById('bpmDisplay').textContent = bpm + ' BPM';
+  if (isPlaying) {
+    clearInterval(beatInterval);
+    runSequencer();
+  }
+  showNotif('BPM: ' + bpm);
+}
+
+// ================================
+// VOLUME / MUTE
+// ================================
+function setVolume(track, val) {
+  volumes[track] = val / 100;
+}
+
+function toggleMute(track, btn) {
+  muted[track] = !muted[track];
+  btn.classList.toggle('muted');
+  btn.textContent = muted[track] ? '🔇' : '🔊';
+}
+
+function updateTrackBar(track) {
+  const bar = document.getElementById('bar-' + track);
+  if (bar) {
+    bar.style.width = '100%';
+    setTimeout(() => { bar.style.width = '0%'; }, 600);
+  }
+}
+
+// ================================
+// SAVE
+// ================================
+function saveProject() {
+  showNotif('💾 Project saved! (coming soon)');
+}
+
+// ================================
+// NOTIFICATION
+// ================================
+let notifTimeout;
+function showNotif(msg) {
+  const el = document.getElementById('notif');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(notifTimeout);
+  notifTimeout = setTimeout(() => el.classList.remove('show'), 2200);
+}
+
+// ================================
+// AI BUDDY
+// ================================
+function setPrompt(text) {
+  document.getElementById('aiInput').value = text;
+  askAI();
+}
+
+async function askAI() {
+  const input = document.getElementById('aiInput');
+  const output = document.getElementById('aiOutput');
+  const btn = document.getElementById('aiBtn');
+  const prompt = input.value.trim();
+  if (!prompt) { showNotif('Type something first!'); return; }
+
+  output.innerHTML = '';
+  output.classList.add('loading');
+  btn.disabled = true;
+
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        system: `You are a fun, enthusiastic AI music buddy for kids aged 6-12 who is helping them make music. When a kid describes their song idea, respond in a very exciting, kid-friendly way with:
+1. 🎵 A fun song title suggestion
+2. 🥁 Beat advice (e.g. "tap Kick + Clap fast for energy!")
+3. 🎤 A simple, fun 4-line lyric they could sing (make it rhyme and be silly/fun)
+4. 🎛️ A mood tip (fast/slow, loud/quiet)
+5. 🌟 One encouraging compliment about their idea
+
+Keep it SHORT (under 120 words total), use emojis, be super enthusiastic and encouraging. Write like you're talking to an excited kid. NO markdown headers, just natural text with emojis.`,
+        messages: [{ role: 'user', content: `My song idea: ${prompt}` }]
+      })
+    });
+
+    const data = await response.json();
+    const text = data.content?.map(i => i.text || '').join('') || 'Wow, great idea! Keep making music! 🎵';
+    output.classList.remove('loading');
+    output.innerHTML = text.replace(/\n/g, '<br>');
+    showNotif('🤖 AI Producer is here!');
+  } catch(err) {
+    output.classList.remove('loading');
+    output.innerHTML = `<span style="color:var(--yellow)">🤖 Oops! Your music idea is SO good my brain exploded! Try again in a second! ✨</span>`;
+    showNotif('Could not reach AI');
+  }
+
+  btn.disabled = false;
+  input.value = '';
+}
+
+document.getElementById('aiInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') askAI();
+});
+
+// ================================
+// INIT
+// ================================
+showNotif('🎵 Welcome to KidBeats! Let\'s make music!');
+</script>
+
+</body>
+</html>
