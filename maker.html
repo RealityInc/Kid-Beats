@@ -137,6 +137,17 @@ canvas#pianoRoll{display:block;width:100%;border-radius:10px;background:#060914}
 .toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%) translateY(20px);background:rgba(10,15,40,.97);border:1px solid rgba(0,210,255,.22);border-radius:11px;padding:8px 18px;font-family:'Orbitron',monospace;font-size:.6rem;letter-spacing:1px;color:#e8f4ff;white-space:nowrap;opacity:0;pointer-events:none;z-index:200;transition:all .3s cubic-bezier(.34,1.56,.64,1)}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 @keyframes spin{to{transform:rotate(360deg)}}
+
+.mode-maker .pad{min-height:96px}
+.pad{min-height:96px;min-width:96px}
+.pad.pop{transform:scale(1.1)!important;box-shadow:0 0 28px rgba(255,255,255,.35)}
+.pad.pulse{animation:bpmPulse .35s ease-out}
+@keyframes bpmPulse{0%{box-shadow:0 0 0 rgba(255,255,255,0)}50%{box-shadow:0 0 22px rgba(0,210,255,.45)}100%{box-shadow:0 0 0 rgba(255,255,255,0)}}
+.nova-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:10px}
+.nova-act{min-height:48px;border-radius:14px;border:1px solid rgba(0,255,202,.25);background:rgba(255,255,255,.04);color:#e8f4ff;font-size:.7rem;font-weight:700}
+#sec-sheet,#sec-watch,.sm-wrap,.wm-wrap{display:none}
+.note-toggle{display:flex;gap:8px;margin:8px 0 6px}.note-toggle button{flex:1;min-height:44px;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.04);color:#e8f4ff}.note-toggle .on{border-color:#00d2ff;color:#00d2ff}
+.record-count{font-family:'Orbitron',monospace;font-size:.75rem;color:#ff3dac;margin-top:6px;min-height:18px}
 </style>
 </head>
 <body>
@@ -180,7 +191,7 @@ canvas#pianoRoll{display:block;width:100%;border-radius:10px;background:#060914}
       <button class="rec-btn" id="recBtn">🎤</button>
       <div>
         <div class="rec-status" id="recStatus">TAP TO RECORD</div>
-        <div class="rec-hint" id="recHint">Record your voice — play it back with effects!</div>
+        <div class="rec-hint" id="recHint">Record your voice — play it back with effects!</div><div class="record-count" id="recordCount"></div>
       </div>
     </div>
     <div class="vfx-row">
@@ -194,6 +205,7 @@ canvas#pianoRoll{display:block;width:100%;border-radius:10px;background:#060914}
   <div class="sec" id="sec-melody">Build a Melody 🎵</div>
   <div class="mc">
     <div class="mi" id="mi-hint">Tap colours to add notes — tap a dot to remove it</div>
+    <div class="note-toggle"><button class="on" id="solfegeBtn">DO RE MI</button><button id="letterBtn">C D E</button></div>
     <div class="nbgrid">
       <button class="nb" data-n="C">🔴<span>DO</span></button>
       <button class="nb" data-n="D">🟠<span>RE</span></button>
@@ -230,6 +242,14 @@ canvas#pianoRoll{display:block;width:100%;border-radius:10px;background:#060914}
       <button class="nb-go" id="novaGo">GO ▶</button>
     </div>
     <div class="nova-out" id="novaOut"><span style="color:#3a5070;font-style:italic;font-size:.8rem">Pick an idea or type your own — NOVA will build the song and play it!</span></div>
+    <div class="nova-actions">
+      <button class="nova-act" data-nova="Add drums">🥁+</button>
+      <button class="nova-act" data-nova="Add bass">🎸+</button>
+      <button class="nova-act" data-nova="Make it faster">⏩</button>
+      <button class="nova-act" data-nova="Make it spooky">👻</button>
+      <button class="nova-act" data-nova="Fix timing">🧩</button>
+      <button class="nova-act" data-nova="Build full song">✨</button>
+    </div>
   </div>
 
   <div class="sec" id="sec-sheet">Sheet Music 🎼</div>
@@ -250,16 +270,15 @@ canvas#pianoRoll{display:block;width:100%;border-radius:10px;background:#060914}
 </div>
 
 <div class="pbar">
+  <button class="cbtn" id="stopBtn">⏹</button>
+  <button class="cbtn" id="barRecBtn">🎤</button>
   <div class="bgrp">
     <button class="bbtn" id="bpmd">−</button>
-    <div class="blbl" id="bpml">120 BPM</div>
+    <div class="blbl" id="bpml">120</div>
     <button class="bbtn" id="bpmu">+</button>
   </div>
-  <button class="cbtn" id="stopBtn">⏹</button>
   <button class="pbig" id="playBtn">▶</button>
-  <button class="cbtn" id="clrAll">🗑</button>
-  <button class="savebtn" id="saveBtn">💾 SAVE</button>
-  <button class="savebtn" id="loadBtn" style="border-color:rgba(255,61,172,.3);color:#ff3dac">📂 LOAD</button>
+  <button class="cbtn" id="novaQuick">🤖</button>
 </div>
 <div class="toast" id="toast"></div>
 
@@ -600,8 +619,9 @@ document.getElementById('bpmd').addEventListener('click',function(){bpm=Math.max
 document.getElementById('bpmu').addEventListener('click',function(){bpm=Math.min(160,bpm+5);document.getElementById('bpml').textContent=bpm+' BPM';if(playing){clearInterval(seqTimer);startPlayback();}toast('BPM: '+bpm);});
 
 /* ── SAVE/LOAD ── */
-document.getElementById('saveBtn').addEventListener('click',function(){try{localStorage.setItem('bb_maker_save',JSON.stringify({melody:melody,bpm:bpm,activeFX:activeFX,voiceFX:voiceFX}));toast('💾 Saved!');}catch(e){toast('Could not save!');}});
-document.getElementById('loadBtn').addEventListener('click',function(){tryLoadProject(true);});
+var saveBtnEl=document.getElementById('saveBtn'),loadBtnEl=document.getElementById('loadBtn');
+if(saveBtnEl)saveBtnEl.addEventListener('click',function(){try{localStorage.setItem('bb_maker_save',JSON.stringify({melody:melody,bpm:bpm,activeFX:activeFX,voiceFX:voiceFX}));toast('💾 Saved!');}catch(e){toast('Could not save!');}});
+if(loadBtnEl)loadBtnEl.addEventListener('click',function(){tryLoadProject(true);});
 function tryLoadProject(showMsg){
   try{
     var raw=localStorage.getItem('bb_maker_save');if(!raw){if(showMsg)toast('No save found!');return;}
@@ -617,6 +637,25 @@ function tryLoadProject(showMsg){
 /* ── TOAST ── */
 var toastTimer;
 function toast(msg){var el=document.getElementById('toast');el.textContent=msg;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(function(){el.classList.remove('show');},2200);}
+
+// UX upgrades
+setInterval(function(){if(!playing)return;document.querySelectorAll('.pad').forEach(function(p){p.classList.add('pulse');setTimeout(function(){p.classList.remove('pulse');},220);});},(60/Math.max(60,bpm))*1000);
+document.querySelectorAll('.pad').forEach(function(p){p.addEventListener('pointerdown',function(){this.classList.add('pop');if(navigator.vibrate)navigator.vibrate(12);setTimeout(()=>this.classList.remove('pop'),120);});});
+document.getElementById('barRecBtn').addEventListener('click',function(){document.getElementById('recBtn').click();});
+document.getElementById('novaQuick').addEventListener('click',function(){document.getElementById('novaIn').focus();toast('🤖 Nova is ready');});
+var noteLabelMode='solfege';
+function updateNoteLabels(){document.querySelectorAll('.nb').forEach(function(b){var n=b.dataset.n;var lbl=noteLabelMode==='solfege'?(NL[n]||n):n;b.querySelector('span').textContent=lbl;});}
+document.getElementById('solfegeBtn').addEventListener('click',function(){noteLabelMode='solfege';this.classList.add('on');document.getElementById('letterBtn').classList.remove('on');updateNoteLabels();});
+document.getElementById('letterBtn').addEventListener('click',function(){noteLabelMode='letter';this.classList.add('on');document.getElementById('solfegeBtn').classList.remove('on');updateNoteLabels();});
+updateNoteLabels();
+document.querySelectorAll('.nova-act').forEach(function(btn){btn.addEventListener('click',function(){var a=this.dataset.nova; if(a==='Add drums'){window._novaPat=['kick','hihat','snare','hihat','kick','clap','snare','hihat'];nova('I added stronger drums to support your groove.');}
+else if(a==='Add bass'){melody=(melody.length?melody:['C','C','G','G','A','A','G']).slice(0,8);renderSeq();nova('I added a bass-like melody to support your beat.');}
+else if(a==='Make it faster'){bpm=Math.min(160,bpm+10);document.getElementById('bpml').textContent=bpm;nova('I made your song faster for more energy.');}
+else if(a==='Make it spooky'){activeFX='alien';document.querySelectorAll('.fxc').forEach(function(c){c.classList.toggle('on',c.dataset.f==='alien');});nova('I made it spooky with alien sound color.');}
+else if(a==='Fix timing'){window._novaPat=['kick','hihat','snare','hihat','kick','hihat','snare','hihat'];nova('I fixed the timing so the groove is steady.');}
+else {buildSong();nova('I built a full song with drums and melody.');} toast('🤖 '+a);});});
+var oldStartRec=startRec; startRec=function(){var c=3;var el=document.getElementById('recordCount');el.textContent='';var iv=setInterval(function(){el.textContent=c>0?('Recording in '+c+'...'):'Recording...';c--;if(c<0){clearInterval(iv);el.textContent='';oldStartRec();}},650);};
+
 </script>
 </body>
 </html>

@@ -79,6 +79,8 @@ html,body{font-family:'Fredoka One',cursive;background:#0a0514;color:#fff;min-he
 
 /* SPINNER */
 @keyframes spin{to{transform:rotate(360deg)}}
+
+.wrap{padding-bottom:120px}.pbar{position:fixed;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;gap:10px;padding:10px;background:rgba(9,9,22,.95);border-top:1px solid rgba(255,165,0,.4)}.pbtn{min-height:52px;min-width:52px;border-radius:16px;border:none;background:rgba(255,255,255,.1);color:#fff;font-size:1.1rem}.pbig{min-width:64px;min-height:64px;border-radius:999px;background:linear-gradient(135deg,#00ffca,#00a0be);color:#031}.pad.pop{transform:scale(1.1)!important;box-shadow:0 0 24px rgba(255,165,0,.6)}
 </style>
 </head>
 <body>
@@ -124,6 +126,9 @@ html,body{font-family:'Fredoka One',cursive;background:#0a0514;color:#fff;min-he
     <div class="song-name" id="songName">🎵 Song Name</div>
     <div class="lyrics" id="lyricsEl"></div>
   </div>
+</div>
+<div class="pbar">
+ <button class="pbtn" id="pStop">⏹</button><button class="pbtn" id="pRec">🎤</button><button class="pbtn">−</button><button class="pbtn pbig" id="pPlay">▶</button><button class="pbtn">+</button><button class="pbtn" id="pNova">🤖</button>
 </div>
 
 <script>
@@ -474,6 +479,11 @@ function stopSong() {
 
 document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible'&&AC&&AC.state==='suspended')AC.resume();});
 document.addEventListener('touchstart',function(){if(AC&&AC.state==='suspended')AC.resume();},{passive:true});
+document.querySelectorAll('.pad').forEach(function(p){p.addEventListener('pointerdown',function(){this.classList.add('pop');if(navigator.vibrate)navigator.vibrate(10);setTimeout(()=>this.classList.remove('pop'),120);});});
+document.getElementById('pPlay').addEventListener('click',function(){document.getElementById('playBtn').click();});
+document.getElementById('pStop').addEventListener('click',function(){document.getElementById('stopBtn').click();});
+document.getElementById('pNova').addEventListener('click',function(){document.getElementById('magicBtn').click();});
+document.getElementById('pRec').addEventListener('click',function(){nova('🎤 Explorer recording opens in Maker mode!');});
 </script>
 </body>
 </html>
