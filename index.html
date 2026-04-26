@@ -1072,86 +1072,208 @@ document.getElementById('magicBtn').addEventListener('click',function(){
   btn.innerHTML='<span class="spinner"></span>';
   document.getElementById('novaMsg').textContent=t('nova_building');
 
-  /* ── Variety seeds — different every call ── */
-  var genres=['reggae','funk','bossa nova','march','calypso','swing','blues','latin','folk','pop','hip-hop','jazz'];
-  var moods=['playful','mysterious','triumphant','dreamy','bouncy','sneaky','epic','silly','peaceful','groovy'];
-  var drumStyles=[
-    'classic 4/4: kick on beats 1 and 3, snare on 2 and 4',
-    'syncopated: kick on 1 and the "and" of 2, snare on 2 and 4',
-    'half-time: kick on 1, snare only on beat 3',
-    'four-on-the-floor: kick every beat, snare on 2 and 4',
-    'reggae one-drop: no kick on beat 1, snare on beat 3 only',
-    'swing: kick on 1, snare on 2 and 4 with shuffle feel',
-    'sparse: kick on 1, snare on 3, lots of space'
-  ];
-  var randomGenre=genres[Math.floor(Math.random()*genres.length)];
-  var randomMood=moods[Math.floor(Math.random()*moods.length)];
-  var randomDrum=drumStyles[Math.floor(Math.random()*drumStyles.length)];
-  var randomSeed=Math.floor(Math.random()*99999);
+  /* ═══════════════════════════════════════
+     SMART GENERATION
+     Step 1: describe the song in words (forces real thinking)
+     Step 2: translate description to JSON grid
+     Key-constrained melody: only give NOVA the rows it should use
+  ═══════════════════════════════════════ */
 
-  /* ── Build voice context ── */
+  /* ── Key → available melody rows ── */
+  /* melRows = [DO,RE,MI,SOL,LA,DO2,RE2,MI2] = [C4,D4,E4,G4,A4,C5,D5,E5] */
+  var KEY_ROWS = {
+    /* Major keys — use major pentatonic subset */
+    'C major': [0,1,2,3,4,5,6,7],   /* all rows work in C major */
+    'G major': [1,2,3,4,6,7],        /* D E G A D5 E5 */
+    'F major': [0,1,2,4,5,6],        /* C D E A C5 D5 */
+    'D major': [1,2,3,4,6,7],
+    'A major': [0,2,3,4,5,7],
+    /* Minor keys — use minor pentatonic */
+    'A minor': [0,1,3,4,5,6],        /* C D G A C5 D5 */
+    'E minor': [1,2,3,4,6,7],        /* D E G A D5 E5 */
+    'D minor': [0,1,3,5,6],          /* C D G C5 D5 */
+    'G minor': [0,2,3,4,5],          /* C E G A C5 */
+    'C minor': [0,1,3,4,5]           /* C D G A C5 */
+  };
+
+  var activeKey = (voiceAnalysis && voiceAnalysis.detectedKey) || 'C major';
+  var availableRows = KEY_ROWS[activeKey] || [0,1,2,3,4,5,6,7];
+  var melRowNames = ['C4','D4','E4','G4','A4','C5','D5','E5'];
+  var availableNoteNames = availableRows.map(function(i){return melRowNames[i];});
+
+  /* ── Random structural templates ── */
+  var structures = [
+    'AABB: play motif A for 8 steps, repeat A, then new motif B for 8 steps, repeat B',
+    'ABAB: alternating 4-step call and 4-step response, repeat twice',
+    'AAAB: repeat a short 4-step motif three times, then a surprising ending phrase',
+    'ascending: melody moves mostly upward through the first 8 steps then resolves down',
+    'descending: melody starts high and steps downward, bass mirrors in reverse',
+    'question-answer: first 8 steps end on an unresolved note, second 8 steps resolve it',
+    'rhythmic: melody uses short punchy notes on strong beats, lots of rests between',
+    'flowing: melody uses longer notes, few rests, feels like singing a smooth phrase'
+  ];
+
+  /* ── Chord progressions by mood/key ── */
+  var progressions = {
+    major: [
+      'C(bar1) G(bar2) Am(bar3) F(bar4) — classic pop',
+      'C(bar1) F(bar2) C(bar3) G(bar4) — simple and bright',
+      'C(bar1) Am(bar2) F(bar3) G(bar4) — emotional',
+      'C(bar1) C(bar2) F(bar3) G(bar4) — steady',
+      'Am(bar1) F(bar2) C(bar3) G(bar4) — starts minor'
+    ],
+    minor: [
+      'Am(bar1) F(bar2) C(bar3) G(bar4) — natural minor',
+      'Am(bar1) G(bar2) F(bar3) G(bar4) — dorian feel',
+      'Am(bar1) Am(bar2) F(bar3) G(bar4) — moody',
+      'Am(bar1) F(bar2) G(bar3) Am(bar4) — circular',
+      'Am(bar1) C(bar2) G(bar3) F(bar4) — hopeful minor'
+    ]
+  };
+
+  var genres=['reggae','funk','bossa nova','march','calypso','swing','blues','latin','folk','indie pop','hip-hop','jazz waltz'];
+  var moods=['playful','mysterious','triumphant','dreamy','bouncy','sneaky','epic','silly','peaceful','groovy','melancholy','celebratory'];
+  var drumStyles=[
+    'kick on 1 and 3, snare on 2 and 4, hihat every 8th note',
+    'kick on 1, snare on 3, hihat on offbeats only (steps 2,4,6,8…)',
+    'kick on beats 1 2 3 4 (four-on-the-floor), snare on 2 and 4',
+    'kick on 1 only, snare on 3 only, sparse hihat, lots of space',
+    'syncopated kick: step 1, step 4, step 9, step 13 — snare on 5 and 13',
+    'reggae: no kick on beat 1, snare on beat 3 only, clap on 2 and 4',
+    'two-beat: kick steps 1 and 9 only, snare steps 5 and 13 — half-time feel',
+    'march: kick and snare alternating every 4 steps, clap on every 4th'
+  ];
+
+  var rng=Math.random;
+  var randomGenre=genres[Math.floor(rng()*genres.length)];
+  var randomMood=moods[Math.floor(rng()*moods.length)];
+  var randomDrum=drumStyles[Math.floor(rng()*drumStyles.length)];
+  var randomStruct=structures[Math.floor(rng()*structures.length)];
+  var isMinorKey=activeKey.includes('minor');
+  var progList=isMinorKey?progressions.minor:progressions.major;
+  var randomProg=progList[Math.floor(rng()*progList.length)];
+  var randomSeed=Math.floor(rng()*99999);
+
+  /* ── Voice/lyric context ── */
   var voiceContext='';
+  var lyricsInstruction='';
+
   if(voiceAnalysis&&voiceAnalysis.pitchCount>3){
     var va=voiceAnalysis;
     voiceContext=
-      'VOICE ANALYSIS (use this to shape the song):\n'+
-      '- Detected musical key: '+va.detectedKey+'\n'+
-      '- Scale: '+va.scaleName+'\n'+
-      '- Pentatonic notes to use in melody: '+(va.pentatonicNotes.length?va.pentatonicNotes.join(', '):'C D E G A')+'\n'+
-      '- Most prominent notes sung: '+va.topNotes.join(', ')+'\n'+
-      '- Detected tempo: '+va.detectedBPM+' BPM → set bpm to '+va.detectedBPM+'\n'+
-      '- Energy/mood of voice: '+va.energy+'\n'+
-      (transcribedLyrics.trim()
-        ? '- LYRICS THE USER SANG: "'+transcribedLyrics.trim().slice(0,200)+'"\n'+
-          '  Use these as the basis for the song lyrics. Keep the same theme and words where possible.\n'
-        : '- No lyrics detected — create your own fun kids lyrics\n')+
-      'IMPORTANT: Build the melody and chord progression in '+va.detectedKey+'. '+
-      'Match the '+va.energy+' energy. ';
+      'VOICE ANALYSIS — the user sang and here is what was detected:\n'+
+      '  Key: '+va.detectedKey+' | Scale: '+va.scaleName+'\n'+
+      '  Notes they sang most: '+va.topNotes.slice(0,4).join(', ')+'\n'+
+      '  Their tempo: '+va.detectedBPM+' BPM | Energy: '+va.energy+'\n'+
+      '  Use BPM: '+va.detectedBPM+'\n';
   } else if(voiceBuf){
-    voiceContext='User recorded audio but pitch was unclear. Build a fun, upbeat song.\n'+
-      (transcribedLyrics.trim()?'They sang/said: "'+transcribedLyrics.trim().slice(0,200)+'". Use this as lyric inspiration.\n':'');
+    voiceContext='User recorded voice (pitch unclear). Choose a BPM between 85-115.\n';
   } else {
-    voiceContext='No voice recorded. Build a fun, energetic kids song.\n';
+    voiceContext='No voice recorded. Choose any BPM between 80-130.\n';
   }
 
-  var systemPrompt=
+  if(transcribedLyrics.trim()){
+    lyricsInstruction=
+      'WHAT THE USER SANG (verbatim transcript):\n'+
+      '"'+transcribedLyrics.trim().slice(0,300)+'"\n'+
+      'Your lyrics MUST:\n'+
+      '- Use actual words/phrases from what they sang wherever possible\n'+
+      '- Stay on the same topic/theme they were singing about\n'+
+      '- Sound like a polished version of what they sang, not a replacement\n';
+  } else {
+    lyricsInstruction='No lyrics detected. Write 4 fun, singable lines themed around the song title.\n';
+  }
+
+  /* ── TWO-STEP PROMPT ── */
+  /* Step 1: Get a natural language song description first.
+     This forces the model to actually think about the music
+     before committing to a grid. */
+  var step1System=
     'You are Lark AI, a creative music producer for kids.\n\n'+
     voiceContext+'\n'+
-    'VARIETY SEED #'+randomSeed+' — make this song UNIQUE and DIFFERENT from anything you have generated before.\n'+
-    'Style: '+randomGenre+' influenced, '+randomMood+' mood\n'+
-    'Drum pattern style: '+randomDrum+'\n\n'+
-    'Return ONLY valid JSON, no markdown, no explanation:\n'+
+    lyricsInstruction+'\n'+
+    'SONG CONSTRAINTS for this generation (seed #'+randomSeed+'):\n'+
+    '  Genre: '+randomGenre+'\n'+
+    '  Mood: '+randomMood+'\n'+
+    '  Melody structure: '+randomStruct+'\n'+
+    '  Chord progression: '+randomProg+'\n'+
+    '  Drum pattern: '+randomDrum+'\n'+
+    '  Available melody notes (ONLY use these): '+availableNoteNames.join(', ')+'\n\n'+
+    'Describe the song you will create in plain English, covering:\n'+
+    '1. Song title and what it is about\n'+
+    '2. Exactly which melody notes you will use and in what order (be specific: "C4 on step 1, G4 on step 3…")\n'+
+    '3. The drum pattern beat by beat\n'+
+    '4. Which chords play on which bars\n'+
+    '5. The 4 lyric lines\n\n'+
+    'Be very specific and concrete. This description will be converted to a sequencer grid.';
+
+  var step1User=lang==='es'
+    ?'Diseña una canción '+randomGenre+' con ambiente '+randomMood+' inspirada en la voz del usuario'
+    :'Design a '+randomGenre+' song with a '+randomMood+' mood inspired by the user's voice';
+
+  /* Step 2 system — converts description to JSON */
+  var step2System=
+    'Convert this song description to a sequencer grid. Return ONLY valid JSON.\n\n'+
+    'Grid format (16 steps each, values 0 or 1):\n'+
     '{\n'+
-    '  "name": "Creative unique song title",\n'+
+    '  "name": "Song title",\n'+
     '  "bpm": 100,\n'+
-    '  "style": "brief style description",\n'+
-    '  "drums": [[...16 values of 0 or 1],[...],[...],[...]],\n'+
-    '  "melody": [[...16 values],[...x8 rows]],\n'+
-    '  "bass": [[...16 values],[...x5 rows]],\n'+
-    '  "chords": [[...16 values],[...x4 rows]],\n'+
-    '  "lyrics": ["Line 1","Line 2","Line 3","Line 4"]\n'+
+    '  "style": "one-line style description",\n'+
+    '  "drums": [\n'+
+    '    [kick: 16 values],\n'+
+    '    [snare: 16 values],\n'+
+    '    [hihat: 16 values],\n'+
+    '    [clap: 16 values]\n'+
+    '  ],\n'+
+    '  "melody": [\n'+
+    '    [C4 row: 16 values],\n'+
+    '    [D4 row: 16 values],\n'+
+    '    [E4 row: 16 values],\n'+
+    '    [G4 row: 16 values],\n'+
+    '    [A4 row: 16 values],\n'+
+    '    [C5 row: 16 values],\n'+
+    '    [D5 row: 16 values],\n'+
+    '    [E5 row: 16 values]\n'+
+    '  ],\n'+
+    '  "bass": [[C2],[D2],[E2],[G2],[A2]],\n'+
+    '  "chords": [[C],[Am],[F],[G]],\n'+
+    '  "lyrics": ["Line1","Line2","Line3","Line4"]\n'+
     '}\n\n'+
-    'Grid rules:\n'+
-    '- drums: 4 rows [Kick,Snare,HiHat,Clap], 16 steps, 0 or 1\n'+
-    '- melody: 8 rows [C4,D4,E4,G4,A4,C5,D5,E5], 16 steps — create a real melodic phrase, max 1 note active per step\n'+
-    '- bass: 5 rows [C2,D2,E2,G2,A2], 16 steps — simple walking bass\n'+
-    '- chords: 4 rows [C,Am,F,G], 16 steps — use whole-bar or half-bar chord changes\n'+
-    '- Make the drum pattern match the style described above\n'+
-    '- bpm: match detected tempo or choose 80-140 for the genre\n'+
-    '- lyrics: 4 short singable lines, fun for kids, themed around the song name';
+    'Rules:\n'+
+    '- melody: ONLY put 1s in rows for available notes: '+availableNoteNames.join(', ')+' — all other rows must be all zeros\n'+
+    '- melody: maximum ONE note active per step (only one row can have a 1 at any given step position)\n'+
+    '- chords: one chord per 4-step bar (put 1 only on step 1 of each bar: steps 1,5,9,13)\n'+
+    '- bass: 1-2 notes per bar, on strong beats\n'+
+    '- Make the pattern faithfully represent the description';
 
-  var userMsg=lang==='es'
-    ?'Crea una canción única con estilo '+randomGenre+' y ambiente '+randomMood
-    :'Create a unique '+randomGenre+'-influenced song with a '+randomMood+' mood';
-
+  /* Make both calls sequentially */
   fetch('/api/chat',{
     method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({
       model:'claude-sonnet-4-20250514',
-      max_tokens:1400,
-      system:systemPrompt,
-      messages:[{role:'user',content:userMsg}]
+      max_tokens:800,
+      system:step1System,
+      messages:[{role:'user',content:step1User}]
     })
+  })
+  .then(function(r){return r.json();})
+  .then(function(data){
+    var description=(data.content||[]).map(function(i){return i.text||'';}).join('');
+    if(!description) throw new Error('empty description');
+    /* Step 2: convert description to JSON */
+    return fetch('/api/chat',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        model:'claude-sonnet-4-20250514',
+        max_tokens:1200,
+        system:step2System,
+        messages:[
+          {role:'user',content:step1User},
+          {role:'assistant',content:description},
+          {role:'user',content:'Now convert that description to the JSON sequencer grid exactly as specified.'}
+        ]
+      })
+    });
   })
   .then(function(r){return r.json();})
   .then(function(data){
@@ -1159,13 +1281,39 @@ document.getElementById('magicBtn').addEventListener('click',function(){
     var song;
     try{song=JSON.parse(raw);}
     catch(e){var m=raw.match(/\{[\s\S]*\}/);if(m)song=JSON.parse(m[0]);else throw e;}
+    /* Enforce key constraint — zero out disallowed melody rows */
+    var allowed=new Set(availableRows);
+    melRowNames.forEach(function(_,r){
+      if(!allowed.has(r)&&song.melody&&song.melody[r]) song.melody[r]=new Array(16).fill(0);
+    });
+    /* Enforce one-note-per-step */
+    if(song.melody){
+      for(var s=0;s<16;s++){
+        var found=false;
+        for(var r=0;r<8;r++){
+          if(song.melody[r]&&song.melody[r][s]){
+            if(found) song.melody[r][s]=0;
+            else found=true;
+          }
+        }
+      }
+    }
     loadSong(song);
   })
   .catch(function(){
-    /* Fallback varies by seed */
     var fallbacks=[
-      {name:'Bouncy Space Frog',bpm:105,drums:[[1,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0],[0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0],[1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1]],melody:[[1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0],[0,0,1,0,0,0,0,0,0,0,1,0,0,0,0,0],[0,0,0,0,1,0,0,0,0,0,0,0,0,0,1,0],[0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],bass:[[1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0],[0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],chords:[[1,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],lyrics:['Hop hop bouncy frog in space,','Zoom zoom flying every place,','Ribbit ribbit to the moon,','We\'re singing this silly tune!']},
-      {name:'Mystery Cave Dance',bpm:95,drums:[[1,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0],[0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0],[0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1],[0,0,0,0,0,0,1,0,0,0,0,0,0,0,1,0]],melody:[[0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0],[0,0,1,0,0,0,0,0,0,0,0,0,1,0,0,0],[1,0,0,0,0,0,1,0,0,0,0,0,0,0,1,0],[0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],bass:[[0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0],[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],chords:[[0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0],[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0]],lyrics:['Sneaky sneaky through the cave,','Dancing shadows being brave,','Echo echo all around,','Making such a spooky sound!']}
+      {name:'Bouncy Moon Frog',bpm:100,style:'playful calypso',
+       drums:[[1,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0],[0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0],[1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0],[0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1]],
+       melody:[[1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0],[0,0,1,0,0,0,1,0,0,0,0,0,0,0,0,0],[0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0],[0,0,0,0,0,0,0,0,1,0,0,0,0,0,1,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],
+       bass:[[1,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0],[0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0],[0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],
+       chords:[[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0],[0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0]],
+       lyrics:['Hop to the moon on a lily pad,','The grooviest frog you ever had,','Ribbit ribbit boing boing boing,','Making all that froggy noise!']},
+      {name:'Sneaky Robot March',bpm:115,style:'mysterious march',
+       drums:[[1,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0],[0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0],[0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1],[0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,1]],
+       melody:[[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[1,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0],[0,0,1,0,0,0,1,0,1,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,1,0,0,0,1,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],
+       bass:[[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0],[0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0],[0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0]],
+       chords:[[0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0],[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0]],
+       lyrics:['Clank clank goes the sneaky bot,','Marching round the parking lot,','Beep boop searching everywhere,','Robot dancing without a care!']}
     ];
     loadSong(fallbacks[randomSeed%fallbacks.length]);
   })
