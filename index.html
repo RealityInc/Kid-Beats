@@ -256,6 +256,15 @@ canvas#sheetMusic{display:block;width:100%;border-radius:8px}
 
 <button class="magic-btn" id="magicBtn">✨ Magic Song!</button>
 
+  <div class="ctrl-toggle-row" id="variationRow">
+    <button class="ctrl-toggle" data-var="base">Make my song</button>
+    <button class="ctrl-toggle" data-var="silly">Make it sillier</button>
+    <button class="ctrl-toggle" data-var="faster">Make it faster</button>
+    <button class="ctrl-toggle" data-var="calmer">Make it calmer</button>
+    <button class="ctrl-toggle" data-var="more_melody">Use more of my melody</button>
+    <button class="ctrl-toggle" data-var="new_style">Try a new style</button>
+  </div>
+
   <!-- NOVA OUTPUT -->
 
   <div class="nova-card" id="novaCard">
@@ -278,7 +287,7 @@ canvas#sheetMusic{display:block;width:100%;border-radius:8px}
         <button class="mic-big" id="micBtn">🎤</button>
         <div style="flex:1">
           <div class="mic-status" id="micStatus" id="ms-tap">Tap mic to start</div>
-          <div class="mic-hint" id="micHint">Sing or hum — it loops with your beat!</div>
+          <div class="mic-hint" id="micHint">Sing or hum a short idea (try 3–10 seconds).</div><div class="mic-hint" id="recTimer">00:00</div>
         </div>
       </div>
       <canvas id="micWave" width="400" height="52"></canvas>
@@ -440,6 +449,23 @@ function withAC(fn) {
   AC.resume().then(fn).catch(function() { try { fn(); } catch(e){} });
 }
 
+
+var audioLib = null;
+async function loadAudioLib(){
+  if(audioLib) return audioLib;
+  audioLib = {
+    extractPitch: (await import('./lib/audio/extractPitch.js')).extractPitch,
+    pitchToNotes: (await import('./lib/audio/pitchToNotes.js')).pitchToNotes,
+    detectTempo: (await import('./lib/audio/detectTempo.js')).detectTempo,
+    detectKey: (await import('./lib/audio/detectKey.js')).detectKey
+  };
+  return audioLib;
+}
+function updateRecTimer(){
+  var el=document.getElementById('recTimer');if(!el) return;
+  var sec=Math.floor((Date.now()-recStartTs)/1000);var m=String(Math.floor(sec/60)).padStart(2,'0');var s=String(sec%60).padStart(2,'0');
+  el.textContent=m+':'+s;
+}
 function makeReverb(dur) {
   if (!AC) return null;
   var k = dur.toFixed(1);
@@ -472,6 +498,10 @@ var speechRecognizer = null;
 var transcribedLyrics = '';
 var voiceAnalysis = null;
 var hasTranscribedMelody = false;
+var analysisDetail = null;
+var selectedVariation = 'base';
+var recStartTs = 0, recTimerInt = null;
+var lastAudioBase64 = null, lastAudioMimeType = 'audio/webm';
 
 /* Instrument state */
 var melInstrument = 'synth', bassInstrument = 'bass_round', chordInstrument = 'pad';
@@ -504,28 +534,28 @@ var T = {
     nova_start: 'Sing or hum something — I\'ll build a song around your voice! 🎵',
     nova_building: '🎧 Analyzing your voice and building the song…',
     nova_ready: '🎉 Your song is ready! Hit play!',
-    mic_tap: 'Tap mic to sing or hum',
+    mic_tap: 'Sing or hum a short idea',
     mic_rec: '● Listening… sing anything!',
     mic_done: '✓ Got it! Tap Magic Song ✨',
     mic_denied: '🎤 Mic blocked! Go to Settings → Safari → Microphone → Allow.',
     mic_notfound: '🎤 No microphone found on this device.',
     mic_inuse: '🎤 Mic is being used by another app — close it and try again.',
     mic_unavailable: '🎤 Voice recording not available on this browser.',
-    mic_hint: 'Sing a melody, hum a tune, or just make sounds!',
+    mic_hint: 'Try 3-10 seconds: sing or hum a short idea.',
     tip: 'Every note sounds great — there are no wrong notes! 🌈'
   },
   es: {
     nova_start: '¡Canta o tararea algo — construiré una canción alrededor de tu voz! 🎵',
     nova_building: '🎧 Analizando tu voz y construyendo la canción…',
     nova_ready: '🎉 ¡Tu canción está lista! ¡Dale play!',
-    mic_tap: 'Toca el mic para cantar',
+    mic_tap: 'Canta o tararea una idea corta',
     mic_rec: '● Escuchando… ¡canta algo!',
     mic_done: '✓ ¡Listo! Toca Canción Mágica ✨',
     mic_denied: '🎤 ¡Mic bloqueado! Ve a Ajustes → Safari → Micrófono → Permitir.',
     mic_notfound: '🎤 No se encontró micrófono.',
     mic_inuse: '🎤 El mic está siendo usado por otra app.',
     mic_unavailable: '🎤 Grabación no disponible en este navegador.',
-    mic_hint: '¡Canta una melodía, tararea o haz cualquier sonido!',
+    mic_hint: 'Intenta 3-10 segundos: canta o tararea una idea corta.',
     tip: '¡Toda nota suena bien — no hay notas equivocadas! 🌈'
   }
 };
@@ -808,6 +838,10 @@ setupInstRow('melInstRow',function(v){melInstrument=v;if(AC)INSTRUMENTS[v]&&INST
 setupInstRow('bassInstRow',function(v){bassInstrument=v;toast('🎸 '+v);});
 setupInstRow('chordInstRow',function(v){chordInstrument=v;toast('🎹 '+v);});
 
+var varBtns=document.querySelectorAll('#variationRow .ctrl-toggle');
+varBtns.forEach(function(b,i){if(i===0)b.classList.add('on');b.addEventListener('click',function(){varBtns.forEach(function(x){x.classList.remove('on');});b.classList.add('on');selectedVariation=b.dataset.var||'base';toast('Variation: '+b.textContent);});});
+
+
 /* ═══════════════════════════════════════
    MICROPHONE + WEB SPEECH + PITCH DETECTION
 ═══════════════════════════════════════ */
@@ -866,19 +900,39 @@ function startVoiceRec(){
             var reader=new FileReader();
             reader.onloadend=function(){
               var base64=reader.result.split(',')[1];
-              fetch('/api/analyze',{
-                method:'POST',
-                headers:{'Content-Type':'application/json'},
-                body:JSON.stringify({audio:base64,mimeType:mimeType})
+              lastAudioBase64=base64;lastAudioMimeType=mimeType;
+              loadAudioLib().then(function(lib){
+                var chan=decodedBuf.getChannelData(0);
+                var pitch=lib.extractPitch(Array.from(chan),decodedBuf.sampleRate);
+                var notes=lib.pitchToNotes(pitch.contour,pitch.hopSize,decodedBuf.sampleRate);
+                var tempo=lib.detectTempo(notes);
+                var key=lib.detectKey(notes);
+                return fetch('/api/analyze-audio',{
+                  method:'POST',
+                  headers:{'Content-Type':'application/json'},
+                  body:JSON.stringify({audio:base64,mimeType:mimeType,pcm:Array.from(chan),sampleRate:decodedBuf.sampleRate,mockMode:false,variation:selectedVariation,local:{notes:notes,tempo:tempo,key:key}})
+                });
               })
               .then(function(r){return r.json();})
-              .then(function(analysis){
-                if(analysis.error){
-                  console.warn('GPT-4o failed:',analysis.error,'-- using YIN');
-                  analyzeVoiceBuffer(decodedBuf);
-                } else {
-                  applyGPTAnalysis(analysis,decodedBuf);
-                }
+              .then(function(payload){
+                if(payload.error) throw new Error(payload.error);
+                analysisDetail=payload.analysis||null;
+                voiceAnalysis={
+                  detectedKey:(payload.analysis&&payload.analysis.key?payload.analysis.key.key+' '+payload.analysis.key.scale:'C major'),
+                  scaleName:(payload.analysis&&payload.analysis.key&&payload.analysis.key.scale)||'unknown',
+                  detectedBPM:(payload.analysis&&payload.analysis.tempo&&payload.analysis.tempo.bpm)||bpm,
+                  energy:(payload.analysis&&payload.analysis.energyLevel)||'medium',
+                  mood:(payload.analysis&&payload.analysis.mood)||'happy',
+                  topNotes:(payload.analysis&&payload.analysis.notes?payload.analysis.notes.slice(0,5).map(function(n){return n.note;}):[]),
+                  pitchCount:(payload.analysis&&payload.analysis.notes?payload.analysis.notes.length:0),
+                  source:'hybrid',
+                  confidence:(payload.analysis&&payload.analysis.confidence?payload.analysis.confidence.pitch:0),
+                  transcript:(payload.analysis&&payload.analysis.transcript)||'',
+                  songPlan:payload.songPlan,
+                  arrangement:payload.arrangement,
+                  uncertaintyMessage:payload.uncertaintyMessage||null
+                };
+                applyHybridAnalysis(voiceAnalysis);
               })
               .catch(function(err){
                 console.warn('Analyze error:',err,'-- using YIN');
@@ -891,6 +945,8 @@ function startVoiceRec(){
       };
       mediaRecorder.start();
       isRecording=true;
+      recStartTs=Date.now();
+      clearInterval(recTimerInt);recTimerInt=setInterval(updateRecTimer,250);updateRecTimer();
       document.getElementById('micBtn').classList.add('recording');
       document.getElementById('micBtn').textContent='⏹';
       document.getElementById('micStatus').textContent=t('mic_rec');
@@ -910,6 +966,8 @@ function startVoiceRec(){
 function stopVoiceRec(){
   if(mediaRecorder&&mediaRecorder.state!=='inactive') mediaRecorder.stop();
   isRecording=false;
+  clearInterval(recTimerInt);
+  document.getElementById('recTimer').textContent='00:00';
   document.getElementById('micBtn').classList.remove('recording');
   document.getElementById('micBtn').textContent='🎤';
   document.getElementById('micStatus').style.color='';
@@ -1028,6 +1086,21 @@ function applyGPTAnalysis(gpt, decodedBuf) {
     : 'Detected ' + detectedKey + ' -- tap Magic Song!';
   document.getElementById('voicePlayRow').style.display = 'flex';
   toast(hasNotes ? 'Melody transcribed! ' + detectedKey : 'Key detected: ' + detectedKey);
+}
+
+
+function applyHybridAnalysis(va){
+  if(va.detectedBPM&&Math.abs(va.detectedBPM-bpm)>5){bpm=va.detectedBPM;updateBPM();}
+  document.getElementById('micStatus').textContent='Your song key might be '+(va.detectedKey||'C major');
+  document.getElementById('micStatus').style.color='#30b070';
+  var beatTxt=analysisDetail&&analysisDetail.tempo?analysisDetail.tempo.bpm+' BPM':'about '+bpm+' BPM';
+  var notesTxt=(va.topNotes&&va.topNotes.length)?va.topNotes.join(', '):'a few playful tones';
+  var vibeTxt=va.mood||'happy';
+  var msg='We heard these notes: '+notesTxt+' · Your beat feels like '+beatTxt+' · Your song vibe is '+vibeTxt+'.';
+  if(va.uncertaintyMessage) msg='I had trouble hearing every note, so I used your rhythm and vibe too.';
+  document.getElementById('micHint').textContent=msg;
+  document.getElementById('voicePlayRow').style.display='flex';
+  toast('Voice DNA captured!');
 }
 
 function autoCorrelate(buf,sr){
@@ -1175,6 +1248,25 @@ document.getElementById('magicBtn').addEventListener('click',function(){
   btn.disabled=true;
   btn.innerHTML='<span class="spinner"></span>';
   document.getElementById('novaMsg').textContent=t('nova_building');
+
+  if(lastAudioBase64){
+    fetch('/api/analyze-audio',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({audio:lastAudioBase64,mimeType:lastAudioMimeType,pcm:voiceBuf?Array.from(voiceBuf.getChannelData(0)):[],sampleRate:voiceBuf?voiceBuf.sampleRate:44100,mockMode:false,variation:selectedVariation})
+    }).then(function(r){return r.json();}).then(function(payload){
+      if(payload.error) throw new Error(payload.error);
+      analysisDetail=payload.analysis||analysisDetail;
+      voiceAnalysis=Object.assign({},voiceAnalysis||{}, {songPlan:payload.songPlan, arrangement:payload.arrangement, uncertaintyMessage:payload.uncertaintyMessage||null});
+      if(voiceAnalysis.uncertaintyMessage) document.getElementById('micHint').textContent=voiceAnalysis.uncertaintyMessage;
+      loadSong(payload.arrangement);
+      document.getElementById('novaMsg').textContent=t('nova_ready');
+    }).catch(function(){
+      if(voiceAnalysis&&voiceAnalysis.arrangement) loadSong(voiceAnalysis.arrangement);
+      else toast('Could not regenerate from voice, using fallback.');
+    }).finally(function(){btn.disabled=false;btn.innerHTML='✨ Magic Song!';});
+    return;
+  }
 
   var genres=['reggae','funk','bossa nova','march','calypso','swing','blues','latin','folk','indie pop','hip-hop','jazz'];
   var moods=['playful','mysterious','triumphant','dreamy','bouncy','sneaky','epic','silly','peaceful','groovy','melancholy','celebratory'];
