@@ -488,10 +488,10 @@ var chordFreqs= { C:[261.63,329.63,392], Am:[220,261.63,329.63], F:[174.61,220,2
 var drumGrid=[], melGrid=[], bassGrid=[], chordGrid=[];
 
 function initGrids() {
-  drumGrid  = drumRows.map(function()  { return new Array(STEPS).fill(false); });
-  melGrid   = melRows.map(function()   { return new Array(STEPS).fill(false); });
-  bassGrid  = bassRows.map(function()  { return new Array(STEPS).fill(false); });
-  chordGrid = chordRows.map(function() { return new Array(STEPS).fill(false); });
+  drumGrid  = drumRows.map(function()  { return [false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false]; });
+  melGrid   = melRows.map(function()   { return [false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false]; });
+  bassGrid  = bassRows.map(function()  { return [false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false]; });
+  chordGrid = chordRows.map(function() { return [false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false]; });
 }
 initGrids();
 
@@ -935,7 +935,7 @@ function autoCorrelate(buf,sr){
   for(var i2=0;i2<SIZE/2;i2++){if(Math.abs(buf[i2])<0.2){r1=i2;break;}}
   for(var i3=SIZE-1;i3>SIZE/2;i3--){if(Math.abs(buf[i3])<0.2){r2=i3;break;}}
   buf=buf.slice(r1,r2);
-  var c=new Array(SIZE).fill(0);
+  var c=[];for(var ci=0;ci<SIZE;ci++)c.push(0);
   for(var lag=0;lag<SIZE/2;lag++){for(var i4=0;i4<SIZE-lag;i4++) c[lag]+=buf[i4]*buf[i4+lag];}
   var d=0;while(c[d]>c[d+1])d++;
   var maxv=-Infinity,maxi=-1;
@@ -1209,7 +1209,7 @@ document.getElementById('magicBtn').addEventListener('click',function(){
 
   var step1User=lang==='es'
     ?'Diseña una canción '+randomGenre+' con ambiente '+randomMood+' inspirada en la voz del usuario'
-    :'Design a '+randomGenre+' song with a '+randomMood+' mood inspired by the user's voice';
+    :'Design a '+randomGenre+' song with a '+randomMood+' mood inspired by the user voice';
 
   /* Step 2 system — converts description to JSON */
   var step2System=
@@ -1282,9 +1282,8 @@ document.getElementById('magicBtn').addEventListener('click',function(){
     try{song=JSON.parse(raw);}
     catch(e){var m=raw.match(/\{[\s\S]*\}/);if(m)song=JSON.parse(m[0]);else throw e;}
     /* Enforce key constraint — zero out disallowed melody rows */
-    var allowed=new Set(availableRows);
     melRowNames.forEach(function(_,r){
-      if(!allowed.has(r)&&song.melody&&song.melody[r]) song.melody[r]=new Array(16).fill(0);
+      if(availableRows.indexOf(r)===-1&&song.melody&&song.melody[r]) song.melody[r]=[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
     });
     /* Enforce one-note-per-step */
     if(song.melody){
