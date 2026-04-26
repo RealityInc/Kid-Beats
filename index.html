@@ -277,11 +277,17 @@ canvas#sheetMusic{display:block;width:100%;border-radius:8px}
       <div style="display:flex;align-items:center;gap:14px;width:100%">
         <button class="mic-big" id="micBtn">🎤</button>
         <div style="flex:1">
-          <div class="mic-status" id="micStatus" id="ms-tap">Tap mic to start</div>
-          <div class="mic-hint" id="micHint">Sing or hum — it loops with your beat!</div>
+          <div class="mic-status" id="micStatus">Tap mic to sing or hum</div>
+          <div class="mic-hint" id="micHint">Sing a melody — I'll detect your key &amp; tempo!</div>
         </div>
       </div>
       <canvas id="micWave" width="400" height="52"></canvas>
+      <!-- Theme input — replaces unreliable speech transcription -->
+      <div style="margin-top:10px">
+        <div style="font-size:.72rem;font-weight:800;color:#c04070;margin-bottom:6px">What's your song about? (optional)</div>
+        <input id="themeInput" type="text" placeholder="e.g. space adventure, my dog, rainbows…"
+          style="width:100%;border-radius:14px;border:2px solid rgba(192,64,112,.25);padding:10px 14px;font-family:Nunito,sans-serif;font-size:.85rem;font-weight:700;background:rgba(255,255,255,.8);color:#2d2417;outline:none"/>
+      </div>
       <div class="vfx-row">
         <button class="vfx-btn on" data-vf="normal"><span class="vi">🎵</span><span class="vl">Normal</span></button>
         <button class="vfx-btn" data-vf="robot"><span class="vi">🤖</span><span class="vl">Robot</span></button>
@@ -471,6 +477,7 @@ var micAnalyser = null, micAnimRAF = null;
 var speechRecognizer = null;
 var transcribedLyrics = '';
 var voiceAnalysis = null;
+var hasTranscribedMelody = false;
 
 /* Instrument state */
 var melInstrument = 'synth', bassInstrument = 'bass_round', chordInstrument = 'pad';
@@ -946,94 +953,319 @@ function autoCorrelate(buf,sr){
   return sr/shift;
 }
 
-/* ── FULL BUFFER ANALYSIS ── */
-function analyzeVoiceBuffer(audioBuf){
-  var sr=audioBuf.sampleRate, data=audioBuf.getChannelData(0), total=data.length;
-  var windowSize=Math.floor(sr*0.1), hopSize=Math.floor(sr*0.05);
-  var detectedFreqs=[];
+/* ═══════════════════════════════════════════════════
+   YIN PITCH DETECTION + MELODY TRANSCRIPTION
+   + KRUMHANSL-SCHMUCKLER KEY DETECTION
+═══════════════════════════════════════════════════ */
 
-  /* Pitch extraction — 100ms windows */
-  for(var start=0;start+windowSize<total;start+=hopSize){
-    var win=data.slice(start,start+windowSize);
-    var rms=0;for(var i=0;i<win.length;i++) rms+=win[i]*win[i];
-    rms=Math.sqrt(rms/win.length);
-    if(rms<0.015) continue;
-    var freq=autoCorrelate(win,sr);
-    if(freq>80&&freq<1200) detectedFreqs.push(freq);
-  }
+/* YIN algorithm — much more accurate than autocorrelation for singing.
+   Returns fundamental frequency in Hz, or -1 if no pitch detected. */
+function yinPitch(buf, sr) {
+  var W = buf.length;
+  var threshold = 0.12; /* confidence threshold — lower = more sensitive */
+  var tauMax = Math.floor(sr / 80);  /* min freq 80Hz */
+  var tauMin = Math.floor(sr / 1200); /* max freq 1200Hz */
 
-  /* Map freqs to note names */
-  var noteNames=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
-  var noteCounts={};
-  detectedFreqs.forEach(function(freq){
-    var midi=Math.round(12*Math.log2(freq/440)+69);
-    var name=noteNames[((midi%12)+12)%12];
-    noteCounts[name]=(noteCounts[name]||0)+1;
-  });
-  var sortedNotes=Object.keys(noteCounts).sort(function(a,b){return noteCounts[b]-noteCounts[a];});
-
-  /* Key detection */
-  var rootNote=sortedNotes[0]||'C';
-  /* Check for minor third vs major third above root */
-  var minorThirds={'C':'Eb','G':'Bb','D':'F','A':'C','E':'G','F':'Ab','B':'D'};
-  var majorThirds={'C':'E','G':'B','D':'F#','A':'C#','E':'G#','F':'A','B':'D#'};
-  var minorScore=noteCounts[minorThirds[rootNote]]||0;
-  var majorScore=noteCounts[majorThirds[rootNote]]||0;
-  var isMinor=minorScore>majorScore;
-  var detectedKey=rootNote+(isMinor?' minor':' major');
-
-  /* Scale name */
-  var scaleName=isMinor?'natural minor (Aeolian)':'major (Ionian)';
-  /* Pentatonic subset */
-  var pentaMinor={'A':['A','C','D','E','G'],'E':['E','G','A','B','D'],'D':['D','F','G','A','C'],'G':['G','Bb','C','D','F'],'C':['C','Eb','F','G','Bb']};
-  var pentaMajor={'C':['C','D','E','G','A'],'G':['G','A','B','D','E'],'F':['F','G','A','C','D'],'D':['D','E','F#','A','B'],'A':['A','B','C#','E','F#']};
-  var penta=(isMinor?pentaMinor:pentaMajor)[rootNote]||[];
-
-  /* Average pitch */
-  var avgFreq=detectedFreqs.length?Math.round(detectedFreqs.reduce(function(a,b){return a+b;},0)/detectedFreqs.length):0;
-
-  /* Tempo from energy onsets */
-  var envWin=Math.floor(sr*0.05),envVals=[];
-  for(var s2=0;s2+envWin<total;s2+=envWin){
-    var sl=data.slice(s2,s2+envWin),r2=0;
-    for(var j=0;j<sl.length;j++) r2+=sl[j]*sl[j];
-    envVals.push(Math.sqrt(r2/sl.length));
-  }
-  var maxEnv=Math.max.apply(null,envVals);
-  var thresh=maxEnv*0.5,onsets=[],lastOn=-1;
-  envVals.forEach(function(v,idx){
-    if(v>thresh&&(lastOn===-1||idx-lastOn>3)){onsets.push(idx*envWin/sr);lastOn=idx;}
-  });
-  var detectedBPM=bpm;
-  if(onsets.length>=2){
-    var intervals=[];
-    for(var k=1;k<onsets.length;k++) intervals.push(onsets[k]-onsets[k-1]);
-    var avgInt=intervals.reduce(function(a,b){return a+b;},0)/intervals.length;
-    if(avgInt>0.2&&avgInt<2.0){
-      detectedBPM=Math.round(Math.round(60/avgInt/5)*5);
-      detectedBPM=Math.max(60,Math.min(180,detectedBPM));
+  /* Step 1: Difference function */
+  var d = new Array(tauMax).fill(0);
+  for (var tau = tauMin; tau < tauMax; tau++) {
+    for (var j = 0; j < W - tau; j++) {
+      var diff = buf[j] - buf[j + tau];
+      d[tau] += diff * diff;
     }
   }
 
-  /* Energy */
-  var oRMS=0;
-  for(var m=0;m<Math.min(total,sr*5);m++) oRMS+=data[m]*data[m];
-  oRMS=Math.sqrt(oRMS/Math.min(total,sr*5));
-  var energy=oRMS>0.12?'energetic':oRMS>0.05?'moderate':'calm and gentle';
+  /* Step 2: Cumulative mean normalized difference */
+  var cmndf = new Array(tauMax).fill(0);
+  cmndf[0] = 1;
+  var runningSum = 0;
+  for (var tau2 = 1; tau2 < tauMax; tau2++) {
+    runningSum += d[tau2];
+    cmndf[tau2] = runningSum === 0 ? 0 : d[tau2] * tau2 / runningSum;
+  }
 
-  voiceAnalysis={
-    detectedKey:detectedKey,rootNote:rootNote,isMinor:isMinor,
-    scaleName:scaleName,pentatonicNotes:penta,
-    topNotes:sortedNotes.slice(0,5),avgFreq:avgFreq,
-    detectedBPM:detectedBPM,energy:energy,
-    duration:Math.round(total/sr*10)/10,pitchCount:detectedFreqs.length
+  /* Step 3: Find first dip below threshold */
+  var tau3 = tauMin;
+  while (tau3 < tauMax - 1) {
+    if (cmndf[tau3] < threshold) {
+      /* Find local minimum */
+      while (tau3 + 1 < tauMax && cmndf[tau3 + 1] < cmndf[tau3]) tau3++;
+      break;
+    }
+    tau3++;
+  }
+  if (tau3 >= tauMax - 1 || cmndf[tau3] >= threshold) return -1;
+
+  /* Step 4: Parabolic interpolation for sub-sample accuracy */
+  var prev = tau3 > 0 ? cmndf[tau3 - 1] : cmndf[tau3];
+  var next = tau3 < tauMax - 1 ? cmndf[tau3 + 1] : cmndf[tau3];
+  var betterTau = tau3 + (next - prev) / (2 * (2 * cmndf[tau3] - prev - next));
+
+  return sr / betterTau;
+}
+
+/* RMS energy of a buffer slice */
+function rmsEnergy(buf) {
+  var sum = 0;
+  for (var i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+  return Math.sqrt(sum / buf.length);
+}
+
+/* Frequency → MIDI note number */
+function freqToMidi(freq) {
+  return Math.round(12 * Math.log2(freq / 440) + 69);
+}
+
+/* MIDI → note name */
+function midiToName(midi) {
+  var names = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+  return names[((midi % 12) + 12) % 12];
+}
+
+/* Frequency → nearest melody row index (0-7)
+   Grid rows: C4=261.63, D4=293.66, E4=329.63, G4=392,
+              A4=440, C5=523.25, D5=587.33, E5=659.26 */
+var GRID_FREQS = [261.63, 293.66, 329.63, 392, 440, 523.25, 587.33, 659.26];
+function freqToGridRow(freq) {
+  var best = -1, bestDist = Infinity;
+  for (var i = 0; i < GRID_FREQS.length; i++) {
+    /* Use cents distance for musical accuracy */
+    var cents = Math.abs(1200 * Math.log2(freq / GRID_FREQS[i]));
+    if (cents < bestDist) { bestDist = cents; best = i; }
+  }
+  /* Reject if more than 150 cents from nearest grid note */
+  return bestDist < 150 ? best : -1;
+}
+
+/* Krumhansl-Schmuckler key profiles */
+var KS_MAJOR = [6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88];
+var KS_MINOR = [6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17];
+var KEY_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+
+function detectKey(chromaVec) {
+  /* Correlate chroma vector against all 24 key profiles */
+  var bestKey = 'C major', bestScore = -Infinity;
+
+  for (var root = 0; root < 12; root++) {
+    /* Major */
+    var mScore = 0;
+    for (var i = 0; i < 12; i++) mScore += chromaVec[i] * KS_MAJOR[(i - root + 12) % 12];
+    if (mScore > bestScore) { bestScore = mScore; bestKey = KEY_NAMES[root] + ' major'; }
+
+    /* Minor */
+    var nScore = 0;
+    for (var j = 0; j < 12; j++) nScore += chromaVec[j] * KS_MINOR[(j - root + 12) % 12];
+    if (nScore > bestScore) { bestScore = nScore; bestKey = KEY_NAMES[root] + ' minor'; }
+  }
+  return bestKey;
+}
+
+/* ── MAIN ANALYSIS FUNCTION ── */
+function analyzeVoiceBuffer(audioBuf) {
+  var sr = audioBuf.sampleRate;
+  var data = audioBuf.getChannelData(0);
+  var total = data.length;
+
+  /* Window and hop sizes for pitch tracking */
+  var winSize = Math.floor(sr * 0.05);  /* 50ms windows */
+  var hopSize = Math.floor(sr * 0.025); /* 25ms hops — 50% overlap */
+  var minRMS  = 0.02; /* silence threshold */
+
+  var pitchEvents = []; /* [{freq, midi, row, time, rms}] */
+  var chromaVec = new Array(12).fill(0); /* for key detection */
+
+  /* ── 1. PITCH TRACKING across entire recording ── */
+  for (var start = 0; start + winSize < total; start += hopSize) {
+    var win = [];
+    for (var k = 0; k < winSize; k++) win.push(data[start + k]);
+    var energy = rmsEnergy(win);
+    if (energy < minRMS) continue; /* skip silence */
+
+    var freq = yinPitch(win, sr);
+    if (freq < 80 || freq > 1200) continue; /* out of vocal range */
+
+    var midi = freqToMidi(freq);
+    var row  = freqToGridRow(freq);
+    var timeInSec = start / sr;
+
+    /* Accumulate chroma for key detection */
+    var chroma = ((midi % 12) + 12) % 12;
+    chromaVec[chroma] += energy;
+
+    pitchEvents.push({ freq: freq, midi: midi, row: row, time: timeInSec, rms: energy });
+  }
+
+  /* ── 2. KEY DETECTION via Krumhansl-Schmuckler ── */
+  var detectedKey = pitchEvents.length > 3 ? detectKey(chromaVec) : 'C major';
+  var isMinor = detectedKey.indexOf('minor') !== -1;
+  var rootNote = detectedKey.split(' ')[0];
+
+  /* Scale description */
+  var scaleNames = { major: 'major (Ionian)', minor: 'natural minor (Aeolian)' };
+  var scaleName = isMinor ? scaleNames.minor : scaleNames.major;
+
+  /* ── 3. TEMPO DETECTION from energy envelope ── */
+  var envWin = Math.floor(sr * 0.05);
+  var envVals = [];
+  for (var s2 = 0; s2 + envWin < total; s2 += envWin) {
+    var eSlice = [];
+    for (var ei = 0; ei < envWin; ei++) eSlice.push(data[s2 + ei]);
+    envVals.push(rmsEnergy(eSlice));
+  }
+  var maxEnv = 0;
+  for (var ev = 0; ev < envVals.length; ev++) if (envVals[ev] > maxEnv) maxEnv = envVals[ev];
+  var thresh = maxEnv * 0.45;
+  var onsets = [], lastOn = -1;
+  for (var oi = 0; oi < envVals.length; oi++) {
+    if (envVals[oi] > thresh && (lastOn === -1 || oi - lastOn > 4)) {
+      onsets.push(oi * envWin / sr);
+      lastOn = oi;
+    }
+  }
+  var detectedBPM = bpm; /* fallback */
+  if (onsets.length >= 3) {
+    var intervals = [];
+    for (var ii = 1; ii < onsets.length; ii++) intervals.push(onsets[ii] - onsets[ii-1]);
+    var avgInt = 0;
+    for (var ij = 0; ij < intervals.length; ij++) avgInt += intervals[ij];
+    avgInt /= intervals.length;
+    if (avgInt > 0.2 && avgInt < 2.0) {
+      var rawBPM = 60 / avgInt;
+      detectedBPM = Math.round(rawBPM / 5) * 5; /* snap to nearest 5 */
+      detectedBPM = Math.max(60, Math.min(180, detectedBPM));
+    }
+  }
+
+  /* ── 4. MELODY TRANSCRIPTION → 16-step grid ── */
+  /* 
+     Strategy:
+     - Divide the recording duration into 16 equal time slots
+     - For each slot, find the most common (by energy) pitch event
+     - Map that pitch to the nearest grid row
+     - Only allow notes that are in the detected key
+  */
+  var duration = total / sr;
+  var slotDur = duration / 16;
+  var newMelGrid = [];
+  for (var r = 0; r < 8; r++) {
+    newMelGrid.push([0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]);
+  }
+
+  /* Key-to-allowed-rows map (same as in Magic Song) */
+  var KEY_ROWS_LOCAL = {
+    'C major':[0,1,2,3,4,5,6,7],'G major':[1,2,3,4,5,6,7],'F major':[0,1,2,4,5,6],
+    'D major':[1,2,3,4,6,7],'A major':[0,2,3,4,5,7],
+    'A minor':[0,1,3,4,5,6],'E minor':[1,2,3,4,6,7],'D minor':[0,1,3,5,6],
+    'G minor':[0,2,3,4,5],'C minor':[0,1,3,4,5],
+    'C# major':[0,1,2,3,4,5,6,7],'D# major':[0,1,2,3,4,5,6,7],
+    'F# major':[1,2,3,4,6,7],'G# major':[0,2,3,4,5,7],
+    'A# major':[0,1,2,4,5,6],'C# minor':[0,1,3,4,5,6],
+    'D# minor':[1,2,3,4,6,7],'F# minor':[1,2,3,4,6,7],
+    'G# minor':[0,2,3,4,5],'A# minor':[0,1,3,4,5]
+  };
+  var allowedRows = KEY_ROWS_LOCAL[detectedKey] || [0,1,2,3,4,5,6,7];
+
+  if (pitchEvents.length > 2 && slotDur > 0) {
+    for (var slot = 0; slot < 16; slot++) {
+      var slotStart = slot * slotDur;
+      var slotEnd   = slotStart + slotDur;
+
+      /* Gather all pitch events in this time slot */
+      var slotEvents = {};
+      for (var pe = 0; pe < pitchEvents.length; pe++) {
+        var ev2 = pitchEvents[pe];
+        if (ev2.time >= slotStart && ev2.time < slotEnd && ev2.row >= 0) {
+          if (allowedRows.indexOf(ev2.row) === -1) continue; /* skip non-key notes */
+          var rowKey = ev2.row;
+          if (!slotEvents[rowKey]) slotEvents[rowKey] = 0;
+          slotEvents[rowKey] += ev2.rms; /* weight by energy */
+        }
+      }
+
+      /* Find highest-energy row in this slot */
+      var bestRow = -1, bestE = 0;
+      for (var rowK in slotEvents) {
+        if (slotEvents[rowK] > bestE) { bestE = slotEvents[rowK]; bestRow = parseInt(rowK); }
+      }
+
+      /* Only place a note if energy is meaningful (avoids noise notes) */
+      if (bestRow >= 0 && bestE > 0.03) {
+        newMelGrid[bestRow][slot] = 1;
+      }
+    }
+  }
+
+  /* ── 5. ENERGY/MOOD ── */
+  var oRMS = 0;
+  var eSamples = Math.min(total, sr * 5);
+  for (var em = 0; em < eSamples; em++) oRMS += data[em] * data[em];
+  oRMS = Math.sqrt(oRMS / eSamples);
+  var energy = oRMS > 0.12 ? 'energetic' : oRMS > 0.05 ? 'moderate' : 'calm and gentle';
+
+  /* ── 6. TOP NOTES ── */
+  var noteCounts = {};
+  for (var np = 0; np < pitchEvents.length; np++) {
+    var n = midiToName(pitchEvents[np].midi);
+    noteCounts[n] = (noteCounts[n] || 0) + 1;
+  }
+  var topNotes = Object.keys(noteCounts).sort(function(a,b){return noteCounts[b]-noteCounts[a];}).slice(0,5);
+
+  /* ── 7. PENTATONIC SUBSET ── */
+  var PENTA_MAJOR = {'C':[0,1,2,3,4],'G':[0,1,2,3,4],'F':[0,1,2,4,5],'D':[1,2,3,4,6],'A':[0,2,3,4,5]};
+  var PENTA_MINOR = {'A':[0,1,3,4,5],'E':[1,2,3,4,6],'D':[0,1,3,5,6],'G':[0,2,3,4,5],'C':[0,1,3,4,5]};
+  var pentaMap = isMinor ? PENTA_MINOR : PENTA_MAJOR;
+  var pentaRows = pentaMap[rootNote] || allowedRows;
+  var pentaNoteNames = pentaRows.map(function(i){ return GRID_FREQS[i] ? freqToGridRow(GRID_FREQS[i]) : 'C'; });
+  var availNoteNames = allowedRows.map(function(i){
+    var names = ['C4','D4','E4','G4','A4','C5','D5','E5'];
+    return names[i] || 'C4';
+  });
+
+  /* ── STORE RESULTS ── */
+  voiceAnalysis = {
+    detectedKey:    detectedKey,
+    rootNote:       rootNote,
+    isMinor:        isMinor,
+    scaleName:      scaleName,
+    topNotes:       topNotes,
+    detectedBPM:    detectedBPM,
+    energy:         energy,
+    duration:       Math.round(duration * 10) / 10,
+    pitchCount:     pitchEvents.length,
+    allowedRows:    allowedRows,
+    availNoteNames: availNoteNames,
+    transcribedGrid: newMelGrid /* the actual melody grid! */
   };
 
-  /* Auto-update BPM if detection is confident */
-  if(detectedFreqs.length>5&&Math.abs(detectedBPM-bpm)>8){
-    bpm=detectedBPM; updateBPM();
-    toast('🎵 Detected '+detectedBPM+' BPM from your voice!');
+  /* ── LOAD TRANSCRIBED MELODY INTO GRID ── */
+  var hasNotes = false;
+  for (var r2 = 0; r2 < 8; r2++) {
+    for (var s3 = 0; s3 < 16; s3++) {
+      if (newMelGrid[r2][s3]) { hasNotes = true; break; }
+    }
+    if (hasNotes) break;
   }
+
+  if (hasNotes) {
+    /* Put the hummed melody into the sequencer immediately */
+    melGrid = newMelGrid;
+    buildTrackGrid('melGrid', melRows, melGrid, 'melody');
+    renderSheet(-1);
+    toast('Melody transcribed! ' + pitchEvents.length + ' notes detected in ' + detectedKey);
+  } else {
+    toast('Detected key: ' + detectedKey + ' at ' + detectedBPM + ' BPM');
+  }
+
+  /* Auto-update BPM if confident */
+  if (pitchEvents.length > 8 && Math.abs(detectedBPM - bpm) > 8) {
+    bpm = detectedBPM;
+    updateBPM();
+  }
+
+  console.log('Lark analysis:', {
+    key: detectedKey, bpm: detectedBPM, energy: energy,
+    pitches: pitchEvents.length, hasTranscription: hasNotes
+  });
 }
 
 /* ── VOICE PLAYBACK ── */
@@ -1066,214 +1298,129 @@ function playVoice(off){
    MAGIC SONG — AI GENERATION
 ═══════════════════════════════════════ */
 document.getElementById('magicBtn').addEventListener('click',function(){
-  if(!AC){toast('Tap Let\'s sing first!');return;}
+  if(!AC){toast('Tap Let\u0027s sing first!');return;}
   var btn=this;
   btn.disabled=true;
   btn.innerHTML='<span class="spinner"></span>';
   document.getElementById('novaMsg').textContent=t('nova_building');
 
-  /* ═══════════════════════════════════════
-     SMART GENERATION
-     Step 1: describe the song in words (forces real thinking)
-     Step 2: translate description to JSON grid
-     Key-constrained melody: only give NOVA the rows it should use
-  ═══════════════════════════════════════ */
-
-  /* ── Key → available melody rows ── */
-  /* melRows = [DO,RE,MI,SOL,LA,DO2,RE2,MI2] = [C4,D4,E4,G4,A4,C5,D5,E5] */
-  var KEY_ROWS = {
-    /* Major keys — use major pentatonic subset */
-    'C major': [0,1,2,3,4,5,6,7],   /* all rows work in C major */
-    'G major': [1,2,3,4,6,7],        /* D E G A D5 E5 */
-    'F major': [0,1,2,4,5,6],        /* C D E A C5 D5 */
-    'D major': [1,2,3,4,6,7],
-    'A major': [0,2,3,4,5,7],
-    /* Minor keys — use minor pentatonic */
-    'A minor': [0,1,3,4,5,6],        /* C D G A C5 D5 */
-    'E minor': [1,2,3,4,6,7],        /* D E G A D5 E5 */
-    'D minor': [0,1,3,5,6],          /* C D G C5 D5 */
-    'G minor': [0,2,3,4,5],          /* C E G A C5 */
-    'C minor': [0,1,3,4,5]           /* C D G A C5 */
-  };
-
-  var activeKey = (voiceAnalysis && voiceAnalysis.detectedKey) || 'C major';
-  var availableRows = KEY_ROWS[activeKey] || [0,1,2,3,4,5,6,7];
-  var melRowNames = ['C4','D4','E4','G4','A4','C5','D5','E5'];
-  var availableNoteNames = availableRows.map(function(i){return melRowNames[i];});
-
-  /* ── Random structural templates ── */
-  var structures = [
-    'AABB: play motif A for 8 steps, repeat A, then new motif B for 8 steps, repeat B',
-    'ABAB: alternating 4-step call and 4-step response, repeat twice',
-    'AAAB: repeat a short 4-step motif three times, then a surprising ending phrase',
-    'ascending: melody moves mostly upward through the first 8 steps then resolves down',
-    'descending: melody starts high and steps downward, bass mirrors in reverse',
-    'question-answer: first 8 steps end on an unresolved note, second 8 steps resolve it',
-    'rhythmic: melody uses short punchy notes on strong beats, lots of rests between',
-    'flowing: melody uses longer notes, few rests, feels like singing a smooth phrase'
-  ];
-
-  /* ── Chord progressions by mood/key ── */
-  var progressions = {
-    major: [
-      'C(bar1) G(bar2) Am(bar3) F(bar4) — classic pop',
-      'C(bar1) F(bar2) C(bar3) G(bar4) — simple and bright',
-      'C(bar1) Am(bar2) F(bar3) G(bar4) — emotional',
-      'C(bar1) C(bar2) F(bar3) G(bar4) — steady',
-      'Am(bar1) F(bar2) C(bar3) G(bar4) — starts minor'
-    ],
-    minor: [
-      'Am(bar1) F(bar2) C(bar3) G(bar4) — natural minor',
-      'Am(bar1) G(bar2) F(bar3) G(bar4) — dorian feel',
-      'Am(bar1) Am(bar2) F(bar3) G(bar4) — moody',
-      'Am(bar1) F(bar2) G(bar3) Am(bar4) — circular',
-      'Am(bar1) C(bar2) G(bar3) F(bar4) — hopeful minor'
-    ]
-  };
-
-  var genres=['reggae','funk','bossa nova','march','calypso','swing','blues','latin','folk','indie pop','hip-hop','jazz waltz'];
+  /* ── Variety seeds ── */
+  var genres=['reggae','funk','bossa nova','march','calypso','swing','blues','latin','folk','indie pop','hip-hop','jazz'];
   var moods=['playful','mysterious','triumphant','dreamy','bouncy','sneaky','epic','silly','peaceful','groovy','melancholy','celebratory'];
-  var drumStyles=[
-    'kick on 1 and 3, snare on 2 and 4, hihat every 8th note',
-    'kick on 1, snare on 3, hihat on offbeats only (steps 2,4,6,8…)',
-    'kick on beats 1 2 3 4 (four-on-the-floor), snare on 2 and 4',
-    'kick on 1 only, snare on 3 only, sparse hihat, lots of space',
-    'syncopated kick: step 1, step 4, step 9, step 13 — snare on 5 and 13',
-    'reggae: no kick on beat 1, snare on beat 3 only, clap on 2 and 4',
-    'two-beat: kick steps 1 and 9 only, snare steps 5 and 13 — half-time feel',
-    'march: kick and snare alternating every 4 steps, clap on every 4th'
+  var structures=[
+    'AABB: first 8 steps motif A, next 8 steps contrasting motif B',
+    'ascending: melody moves upward steps 1-8 then resolves down in 9-16',
+    'descending: melody starts high steps downward across all 16 steps',
+    'call-response: 4-step question phrase then 4-step answer, repeated twice',
+    'AAAB: 3-note motif repeated 3 times then surprising variation',
+    'rhythmic: sparse, notes on strong beats only with lots of rests',
+    'flowing: stepwise motion, smooth singable phrase'
   ];
+  var drumStyles=[
+    'kick steps 1,5,9,13 snare steps 5,13 hihat every even step',
+    'kick steps 1,3,9,11 snare steps 5,13 hihat every odd step',
+    'kick steps 1,13 snare step 9 hihat offbeats sparse half-time',
+    'kick every step 1-16 four-on-floor snare steps 5,13',
+    'kick step 1 snare step 9 clap steps 5,13 very sparse',
+    'kick steps 1,7,9,15 snare steps 5,13 clap step 13 syncopated',
+    'kick steps 1,5,9 snare steps 5,13 hihat steps 1,5,9,13 march'
+  ];
+  var chordProgressions=[
+    'C on steps 1-4, Am on steps 5-8, F on steps 9-12, G on steps 13-16',
+    'Am on steps 1-4, F on steps 5-8, C on steps 9-12, G on steps 13-16',
+    'C on steps 1-4, F on steps 5-8, C on steps 9-12, G on steps 13-16',
+    'C on steps 1-8, F on steps 9-12, G on steps 13-16',
+    'Am on steps 1-8, G on steps 9-12, F on steps 13-16',
+    'F on steps 1-4, C on steps 5-8, G on steps 9-12, Am on steps 13-16',
+    'C on steps 1-4, G on steps 5-8, Am on steps 9-12, F on steps 13-16'
+  ];
+  var KEY_ROWS={'C major':[0,1,2,3,4,5,6,7],'G major':[1,2,3,4,5,6,7],'F major':[0,1,2,4,5,6],'D major':[1,2,3,4,6,7],'A major':[0,2,3,4,5,7],'A minor':[0,1,3,4,5,6],'E minor':[1,2,3,4,6,7],'D minor':[0,1,3,5,6],'G minor':[0,2,3,4,5],'C minor':[0,1,3,4,5],'C# major':[0,1,2,3,4,5,6,7],'D# major':[0,1,2,3,4,5,6,7],'F# major':[1,2,3,4,6,7],'G# major':[0,2,3,4,5,7],'A# major':[0,1,2,4,5,6],'C# minor':[0,1,3,4,5,6],'D# minor':[1,2,3,4,6,7],'F# minor':[1,2,3,4,6,7],'G# minor':[0,2,3,4,5],'A# minor':[0,1,3,4,5]};
 
   var rng=Math.random;
   var randomGenre=genres[Math.floor(rng()*genres.length)];
   var randomMood=moods[Math.floor(rng()*moods.length)];
-  var randomDrum=drumStyles[Math.floor(rng()*drumStyles.length)];
   var randomStruct=structures[Math.floor(rng()*structures.length)];
-  var isMinorKey=activeKey.includes('minor');
-  var progList=isMinorKey?progressions.minor:progressions.major;
-  var randomProg=progList[Math.floor(rng()*progList.length)];
+  var randomDrum=drumStyles[Math.floor(rng()*drumStyles.length)];
+  var randomProg=chordProgressions[Math.floor(rng()*chordProgressions.length)];
   var randomSeed=Math.floor(rng()*99999);
 
-  /* ── Voice/lyric context ── */
-  var voiceContext='';
-  var lyricsInstruction='';
+  var activeKey=(voiceAnalysis&&voiceAnalysis.detectedKey)||'C major';
+  var availableRows=(voiceAnalysis&&voiceAnalysis.allowedRows)||KEY_ROWS[activeKey]||[0,1,2,3,4,5,6,7];
+  var melRowNames=['C4','D4','E4','G4','A4','C5','D5','E5'];
+  var availableNoteNames=(voiceAnalysis&&voiceAnalysis.availNoteNames)||availableRows.map(function(i){return melRowNames[i];});
 
+  hasTranscribedMelody=(function(){
+    if(!voiceAnalysis||!voiceAnalysis.transcribedGrid)return false;
+    for(var _r=0;_r<8;_r++)for(var _s=0;_s<16;_s++)if(voiceAnalysis.transcribedGrid[_r][_s])return true;
+    return false;
+  })();
+
+  var themeEl=document.getElementById('themeInput');
+  var userTheme=themeEl?themeEl.value.trim():'';
+
+  /* Voice analysis context */
+  var voiceCtx='';
   if(voiceAnalysis&&voiceAnalysis.pitchCount>3){
     var va=voiceAnalysis;
-    voiceContext=
-      'VOICE ANALYSIS — the user sang and here is what was detected:\n'+
-      '  Key: '+va.detectedKey+' | Scale: '+va.scaleName+'\n'+
-      '  Notes they sang most: '+va.topNotes.slice(0,4).join(', ')+'\n'+
-      '  Their tempo: '+va.detectedBPM+' BPM | Energy: '+va.energy+'\n'+
-      '  Use BPM: '+va.detectedBPM+'\n';
+    voiceCtx=
+      'VOICE ANALYSIS (detected from user singing):\n'+
+      '- Musical key: '+va.detectedKey+' ('+va.scaleName+')\n'+
+      '- Detected tempo: '+va.detectedBPM+' BPM\n'+
+      '- Energy: '+va.energy+'\n'+
+      '- Available melody notes: '+availableNoteNames.join(', ')+'\n'+
+      'Set bpm='+va.detectedBPM+'. Use only notes: '+availableNoteNames.join(', ')+'.\n'+
+      (hasTranscribedMelody?'The melody grid is already filled with notes transcribed from the user voice. DO NOT change the melody. Only generate drums, bass, and chords to accompany it.\n':'');
   } else if(voiceBuf){
-    voiceContext='User recorded voice (pitch unclear). Choose a BPM between 85-115.\n';
+    voiceCtx='User recorded voice (pitch unclear). Choose bpm 90-110.\n';
   } else {
-    voiceContext='No voice recorded. Choose any BPM between 80-130.\n';
+    voiceCtx='No voice recorded. Choose bpm 80-130.\n';
   }
 
-  if(transcribedLyrics.trim()){
-    lyricsInstruction=
-      'WHAT THE USER SANG (verbatim transcript):\n'+
-      '"'+transcribedLyrics.trim().slice(0,300)+'"\n'+
-      'Your lyrics MUST:\n'+
-      '- Use actual words/phrases from what they sang wherever possible\n'+
-      '- Stay on the same topic/theme they were singing about\n'+
-      '- Sound like a polished version of what they sang, not a replacement\n';
-  } else {
-    lyricsInstruction='No lyrics detected. Write 4 fun, singable lines themed around the song title.\n';
-  }
+  var themeCtx=userTheme
+    ?'THEME: "'+userTheme+'" — base title, lyrics, and mood on this.\n'
+    :'No theme. Create a fun kids '+randomGenre+' theme.\n';
 
-  /* ── TWO-STEP PROMPT ── */
-  /* Step 1: Get a natural language song description first.
-     This forces the model to actually think about the music
-     before committing to a grid. */
-  var step1System=
-    'You are Lark AI, a creative music producer for kids.\n\n'+
-    voiceContext+'\n'+
-    lyricsInstruction+'\n'+
-    'SONG CONSTRAINTS for this generation (seed #'+randomSeed+'):\n'+
-    '  Genre: '+randomGenre+'\n'+
-    '  Mood: '+randomMood+'\n'+
-    '  Melody structure: '+randomStruct+'\n'+
-    '  Chord progression: '+randomProg+'\n'+
-    '  Drum pattern: '+randomDrum+'\n'+
-    '  Available melody notes (ONLY use these): '+availableNoteNames.join(', ')+'\n\n'+
-    'Describe the song you will create in plain English, covering:\n'+
-    '1. Song title and what it is about\n'+
-    '2. Exactly which melody notes you will use and in what order (be specific: "C4 on step 1, G4 on step 3…")\n'+
-    '3. The drum pattern beat by beat\n'+
-    '4. Which chords play on which bars\n'+
-    '5. The 4 lyric lines\n\n'+
-    'Be very specific and concrete. This description will be converted to a sequencer grid.';
-
-  var step1User=lang==='es'
-    ?'Diseña una canción '+randomGenre+' con ambiente '+randomMood+' inspirada en la voz del usuario'
-    :'Design a '+randomGenre+' song with a '+randomMood+' mood inspired by the user voice';
-
-  /* Step 2 system — converts description to JSON */
-  var step2System=
-    'Convert this song description to a sequencer grid. Return ONLY valid JSON.\n\n'+
-    'Grid format (16 steps each, values 0 or 1):\n'+
+  var systemPrompt=
+    'You are Lark AI, a music producer for kids.\n\n'+
+    voiceCtx+'\n'+themeCtx+'\n'+
+    'VARIETY SEED #'+randomSeed+': make this song unique.\n'+
+    'Genre: '+randomGenre+' | Mood: '+randomMood+'\n'+
+    'Melody structure: '+randomStruct+'\n'+
+    'Drum pattern: '+randomDrum+'\n'+
+    'Chord progression: '+randomProg+'\n\n'+
+    'Return ONLY this JSON, no markdown:\n'+
     '{\n'+
     '  "name": "Song title",\n'+
     '  "bpm": 100,\n'+
-    '  "style": "one-line style description",\n'+
-    '  "drums": [\n'+
-    '    [kick: 16 values],\n'+
-    '    [snare: 16 values],\n'+
-    '    [hihat: 16 values],\n'+
-    '    [clap: 16 values]\n'+
-    '  ],\n'+
-    '  "melody": [\n'+
-    '    [C4 row: 16 values],\n'+
-    '    [D4 row: 16 values],\n'+
-    '    [E4 row: 16 values],\n'+
-    '    [G4 row: 16 values],\n'+
-    '    [A4 row: 16 values],\n'+
-    '    [C5 row: 16 values],\n'+
-    '    [D5 row: 16 values],\n'+
-    '    [E5 row: 16 values]\n'+
-    '  ],\n'+
-    '  "bass": [[C2],[D2],[E2],[G2],[A2]],\n'+
-    '  "chords": [[C],[Am],[F],[G]],\n'+
-    '  "lyrics": ["Line1","Line2","Line3","Line4"]\n'+
+    '  "style": "brief style note",\n'+
+    '  "drums": [[kick 16],[snare 16],[hihat 16],[clap 16]],\n'+
+    '  "melody": [[C4 16],[D4 16],[E4 16],[G4 16],[A4 16],[C5 16],[D5 16],[E5 16]],\n'+
+    '  "bass": [[C2 16],[D2 16],[E2 16],[G2 16],[A2 16]],\n'+
+    '  "chords": [[C 16],[Am 16],[F 16],[G 16]],\n'+
+    '  "lyrics": ["l1","l2","l3","l4"]\n'+
     '}\n\n'+
-    'Rules:\n'+
-    '- melody: ONLY put 1s in rows for available notes: '+availableNoteNames.join(', ')+' — all other rows must be all zeros\n'+
-    '- melody: maximum ONE note active per step (only one row can have a 1 at any given step position)\n'+
-    '- chords: one chord per 4-step bar (put 1 only on step 1 of each bar: steps 1,5,9,13)\n'+
-    '- bass: 1-2 notes per bar, on strong beats\n'+
-    '- Make the pattern faithfully represent the description';
+    'RULES:\n'+
+    '- All values 0 or 1\n'+
+    (hasTranscribedMelody
+      ?'- melody: USE THE PROVIDED melody exactly, copy it verbatim\n'
+      :'- melody: only put 1s in rows for notes: '+availableNoteNames.join(', ')+'\n'+'- melody: max 1 note active per step\n')+
+    '- drums: follow the drum pattern above exactly\n'+
+    '- chords: put 1 only on first step of each bar per the progression\n'+
+    '- lyrics: themed around "'+( userTheme||randomGenre+' adventure')+'", fun and singable\n'+
+    '- bpm: use detected tempo if given, else choose for genre';
 
-  /* Make both calls sequentially */
+  var userMsg=userTheme
+    ?'Create a '+randomGenre+' song about: '+userTheme
+    :'Create a unique '+randomGenre+' song, '+randomMood+' mood';
+
   fetch('/api/chat',{
     method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({
       model:'claude-sonnet-4-20250514',
-      max_tokens:800,
-      system:step1System,
-      messages:[{role:'user',content:step1User}]
+      max_tokens:1400,
+      system:systemPrompt,
+      messages:[{role:'user',content:userMsg+(hasTranscribedMelody?' Here is the melody transcribed from the user voice (copy this exactly into the melody field): '+JSON.stringify(voiceAnalysis.transcribedGrid):'')}]
     })
-  })
-  .then(function(r){return r.json();})
-  .then(function(data){
-    var description=(data.content||[]).map(function(i){return i.text||'';}).join('');
-    if(!description) throw new Error('empty description');
-    /* Step 2: convert description to JSON */
-    return fetch('/api/chat',{
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        model:'claude-sonnet-4-20250514',
-        max_tokens:1200,
-        system:step2System,
-        messages:[
-          {role:'user',content:step1User},
-          {role:'assistant',content:description},
-          {role:'user',content:'Now convert that description to the JSON sequencer grid exactly as specified.'}
-        ]
-      })
-    });
   })
   .then(function(r){return r.json();})
   .then(function(data){
@@ -1281,48 +1428,47 @@ document.getElementById('magicBtn').addEventListener('click',function(){
     var song;
     try{song=JSON.parse(raw);}
     catch(e){var m=raw.match(/\{[\s\S]*\}/);if(m)song=JSON.parse(m[0]);else throw e;}
-    /* Enforce key constraint — zero out disallowed melody rows */
-    melRowNames.forEach(function(_,r){
-      if(availableRows.indexOf(r)===-1&&song.melody&&song.melody[r]) song.melody[r]=[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
-    });
-    /* Enforce one-note-per-step */
-    if(song.melody){
-      for(var s=0;s<16;s++){
-        var found=false;
-        for(var r=0;r<8;r++){
-          if(song.melody[r]&&song.melody[r][s]){
-            if(found) song.melody[r][s]=0;
-            else found=true;
+    /* Enforce key constraint */
+    if(!hasTranscribedMelody){
+      melRowNames.forEach(function(_,r){
+        if(availableRows.indexOf(r)===-1&&song.melody&&song.melody[r])
+          song.melody[r]=[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
+      });
+      if(song.melody){
+        for(var s=0;s<16;s++){
+          var found=false;
+          for(var r=0;r<8;r++){
+            if(song.melody[r]&&song.melody[r][s]){
+              if(found)song.melody[r][s]=0;else found=true;
+            }
           }
         }
       }
     }
     loadSong(song);
   })
-  .catch(function(){
-    var fallbacks=[
-      {name:'Bouncy Moon Frog',bpm:100,style:'playful calypso',
-       drums:[[1,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0],[0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0],[1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0],[0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1]],
-       melody:[[1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0],[0,0,1,0,0,0,1,0,0,0,0,0,0,0,0,0],[0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0],[0,0,0,0,0,0,0,0,1,0,0,0,0,0,1,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],
-       bass:[[1,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0],[0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0],[0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],
-       chords:[[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0],[0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0]],
-       lyrics:['Hop to the moon on a lily pad,','The grooviest frog you ever had,','Ribbit ribbit boing boing boing,','Making all that froggy noise!']},
-      {name:'Sneaky Robot March',bpm:115,style:'mysterious march',
-       drums:[[1,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0],[0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0],[0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1],[0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,1]],
-       melody:[[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[1,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0],[0,0,1,0,0,0,1,0,1,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,1,0,0,0,1,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],
-       bass:[[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0],[0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0],[0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0]],
-       chords:[[0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0],[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0]],
-       lyrics:['Clank clank goes the sneaky bot,','Marching round the parking lot,','Beep boop searching everywhere,','Robot dancing without a care!']}
-    ];
-    loadSong(fallbacks[randomSeed%fallbacks.length]);
+  .catch(function(err){
+    console.error('Magic Song error:',err);
+    var fallback={
+      name:userTheme?userTheme+' Song':'Bouncy Star Song',
+      bpm:100,style:randomGenre+' '+randomMood,
+      drums:[[1,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0],[0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0],[1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0],[0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,1]],
+      melody:[[1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0],[0,0,1,0,0,0,1,0,0,0,0,0,0,0,0,0],[0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0],[0,0,0,0,0,0,0,0,1,0,0,0,0,0,1,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],
+      bass:[[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],
+      chords:[[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0],[0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0]],
+      lyrics:['Zoom to the stars far away,','Dancing and singing all day,','Bloop boop music in the air,','Lark songs playing everywhere!']
+    };
+    loadSong(fallback);
   })
-  .finally(function(){btn.disabled=false;btn.innerHTML='✨ Magic Song!';});
+  .finally(function(){btn.disabled=false;btn.innerHTML='\u2728 Magic Song!';});
 });
+
 
 function loadSong(song){
   if(song.bpm) {bpm=Math.max(60,Math.min(180,song.bpm));updateBPM();}
   if(song.drums&&song.drums.length===4) drumGrid=song.drums.map(function(r){return r.map(function(v){return!!v;});});
-  if(song.melody&&song.melody.length===8) melGrid=song.melody.map(function(r){return r.map(function(v){return!!v;});});
+  if(!hasTranscribedMelody&&song.melody&&song.melody.length===8) melGrid=song.melody.map(function(r){return r.map(function(v){return!!v;});});
+  else if(hasTranscribedMelody&&voiceAnalysis.transcribedGrid) melGrid=voiceAnalysis.transcribedGrid; /* keep hummed melody */
   if(song.bass&&song.bass.length===5) bassGrid=song.bass.map(function(r){return r.map(function(v){return!!v;});});
   if(song.chords&&song.chords.length===4) chordGrid=song.chords.map(function(r){return r.map(function(v){return!!v;});});
   buildGridUI();
