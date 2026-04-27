@@ -1,0 +1,20 @@
+{
+  "notes": [
+    {"note":"C4","midi":60,"startTime":0.0,"duration":0.4,"confidence":0.8},
+    {"note":"E4","midi":64,"startTime":0.5,"duration":0.4,"confidence":0.78},
+    {"note":"G4","midi":67,"startTime":1.0,"duration":0.45,"confidence":0.82}
+  ],
+  "key": "C",
+  "scale": "major",
+  "bpm": 108,
+  "beatTimes": [0,0.56,1.11,1.67],
+  "rhythmPattern": [0.56,0.55,0.56],
+  "vibe": {
+    "transcript": null,
+    "mood": "happy",
+    "energy": "medium",
+    "theme": "playful adventure",
+    "suggestedStyles": ["kids pop"],
+    "safetyFlags": []
+  }
+}
