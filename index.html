@@ -495,13 +495,17 @@ var mediaRecorder = null, recChunks = [];
 var voiceFX = 'normal';
 var micAnalyser = null, micAnimRAF = null;
 var speechRecognizer = null;
+var activeMicStream = null;
 var transcribedLyrics = '';
 var voiceAnalysis = null;
 var hasTranscribedMelody = false;
 var analysisDetail = null;
 var selectedVariation = 'base';
 var recStartTs = 0, recTimerInt = null;
+var recHardStopTimer = null;
 var lastAudioBase64 = null, lastAudioMimeType = 'audio/webm';
+var vocalTracks = [];
+var MAX_RECORD_SECONDS = 30;
 
 /* Instrument state */
 var melInstrument = 'synth', bassInstrument = 'bass_round', chordInstrument = 'pad';
@@ -814,8 +818,8 @@ function stopSeq(){
 document.getElementById('playBtn').addEventListener('click',function(){if(!AC){toast('Tap Let\'s sing first!');return;}playing?stopSeq():startSeq();});
 document.getElementById('pbarPlay').addEventListener('click',function(){if(!AC){toast('Tap Let\'s sing first!');return;}playing?stopSeq():startSeq();});
 document.getElementById('stopBtn').addEventListener('click',stopSeq);
-document.getElementById('clearAllBtn').addEventListener('click',function(){stopSeq();initGrids();buildGridUI();voiceBuf=null;transcribedLyrics='';voiceAnalysis=null;document.getElementById('voicePlayRow').style.display='none';document.getElementById('novaLyrics').innerHTML='';document.getElementById('micHint').textContent=t('mic_hint');document.getElementById('micStatus').textContent=t('mic_tap');toast('🗑 All clear!');});
-document.getElementById('expClearBtn').addEventListener('click',function(){stopSeq();initGrids();buildGridUI();voiceBuf=null;transcribedLyrics='';voiceAnalysis=null;document.getElementById('voicePlayRow').style.display='none';document.getElementById('novaLyrics').innerHTML='';document.getElementById('micHint').textContent=t('mic_hint');document.getElementById('micStatus').textContent=t('mic_tap');toast('↺ Starting fresh!');});
+document.getElementById('clearAllBtn').addEventListener('click',function(){stopSeq();initGrids();buildGridUI();resetVoiceSession();document.getElementById('novaLyrics').innerHTML='';toast('🗑 All clear!');});
+document.getElementById('expClearBtn').addEventListener('click',function(){stopSeq();initGrids();buildGridUI();resetVoiceSession();document.getElementById('novaLyrics').innerHTML='';toast('↺ Starting fresh!');});
 
 /* BPM controls */
 document.getElementById('bpmd').addEventListener('click',function(){bpm=Math.max(60,bpm-5);updateBPM();if(playing){stopSeq();startSeq();}});
@@ -853,6 +857,7 @@ document.getElementById('micBtn').addEventListener('click',function(){
 
 function startVoiceRec(){
   if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){showMicError('unavailable');return;}
+  cleanupVoiceCapture();
 
   /* ── Web Speech API for lyrics ── */
   transcribedLyrics='';
@@ -881,6 +886,7 @@ function startVoiceRec(){
   /* ── MediaRecorder for audio + pitch analysis ── */
   navigator.mediaDevices.getUserMedia({audio:true,video:false})
     .then(function(stream){
+      activeMicStream=stream;
       micAnalyser=AC.createAnalyser();micAnalyser.fftSize=2048;
       var src=AC.createMediaStreamSource(stream);src.connect(micAnalyser);
       drawMicWave();
@@ -888,15 +894,17 @@ function startVoiceRec(){
       mediaRecorder=new MediaRecorder(stream);recChunks=[];
       mediaRecorder.ondataavailable=function(e){if(e.data.size>0)recChunks.push(e.data);};
       mediaRecorder.onstop=function(){
+        clearTimeout(recHardStopTimer);recHardStopTimer=null;
         stopMicWave();
-        stream.getTracks().forEach(function(t){t.stop();});
+        cleanupVoiceCapture();
         var blob=new Blob(recChunks,{type:'audio/webm'});
         var mimeType=blob.type||'audio/webm';
         document.getElementById('micStatus').textContent='Analyzing your voice...';
         document.getElementById('micStatus').style.color='#f0a030';
         blob.arrayBuffer().then(function(ab){
           AC.decodeAudioData(ab,function(decodedBuf){
-            voiceBuf=decodedBuf;
+            vocalTracks.push(decodedBuf);
+            voiceBuf=stitchVocalTracks(vocalTracks);
             var reader=new FileReader();
             reader.onloadend=function(){
               var base64=reader.result.split(',')[1];
@@ -947,11 +955,13 @@ function startVoiceRec(){
       isRecording=true;
       recStartTs=Date.now();
       clearInterval(recTimerInt);recTimerInt=setInterval(updateRecTimer,250);updateRecTimer();
+      clearTimeout(recHardStopTimer);
+      recHardStopTimer=setTimeout(function(){if(isRecording)stopVoiceRec();},MAX_RECORD_SECONDS*1000);
       document.getElementById('micBtn').classList.add('recording');
       document.getElementById('micBtn').textContent='⏹';
       document.getElementById('micStatus').textContent=t('mic_rec');
       document.getElementById('micStatus').style.color='#c04070';
-      document.getElementById('micHint').textContent=t('mic_hint');
+      document.getElementById('micHint').textContent='Up to '+MAX_RECORD_SECONDS+'s per take. Tap again to stop.';
     })
     .catch(function(err){
       if(speechRecognizer){try{speechRecognizer.stop();}catch(e){}}
@@ -967,10 +977,12 @@ function stopVoiceRec(){
   if(mediaRecorder&&mediaRecorder.state!=='inactive') mediaRecorder.stop();
   isRecording=false;
   clearInterval(recTimerInt);
+  clearTimeout(recHardStopTimer);recHardStopTimer=null;
   document.getElementById('recTimer').textContent='00:00';
   document.getElementById('micBtn').classList.remove('recording');
   document.getElementById('micBtn').textContent='🎤';
   document.getElementById('micStatus').style.color='';
+  if(speechRecognizer){try{speechRecognizer.stop();}catch(e){}}
 }
 
 function showMicError(code){
@@ -1216,11 +1228,7 @@ function analyzeVoiceBuffer(audioBuf){
 /* ── VOICE PLAYBACK ── */
 document.getElementById('voicePlayBtn')&&document.getElementById('voicePlayBtn').addEventListener('click',function(){playVoice(0);});
 document.getElementById('voiceClearBtn')&&document.getElementById('voiceClearBtn').addEventListener('click',function(){
-  voiceBuf=null;transcribedLyrics='';voiceAnalysis=null;
-  document.getElementById('voicePlayRow').style.display='none';
-  document.getElementById('micStatus').textContent=t('mic_tap');
-  document.getElementById('micStatus').style.color='';
-  document.getElementById('micHint').textContent=t('mic_hint');
+  resetVoiceSession();
   toast('Voice cleared');
 });
 document.querySelectorAll('.vfx-btn').forEach(function(b){b.addEventListener('click',function(){document.querySelectorAll('.vfx-btn').forEach(function(x){x.classList.remove('on');});this.classList.add('on');voiceFX=this.dataset.vf;toast('Voice: '+this.querySelector('.vl').textContent);});});
@@ -1237,6 +1245,38 @@ function playVoice(off){
     else{src.connect(g);g.connect(M);}
     src.start(t);
   });
+}
+
+function cleanupVoiceCapture(){
+  if(activeMicStream){activeMicStream.getTracks().forEach(function(t){t.stop();});activeMicStream=null;}
+}
+
+function stitchVocalTracks(tracks){
+  if(!tracks||!tracks.length||!AC) return null;
+  if(tracks.length===1) return tracks[0];
+  var channels=1,sampleRate=AC.sampleRate,maxLen=0;
+  tracks.forEach(function(t){channels=Math.max(channels,t.numberOfChannels||1);sampleRate=t.sampleRate||sampleRate;maxLen=Math.max(maxLen,t.length||0);});
+  var mixed=AC.createBuffer(channels,maxLen,sampleRate);
+  for(var ch=0;ch<channels;ch++){
+    var out=mixed.getChannelData(ch);
+    tracks.forEach(function(t){
+      var src=t.getChannelData(Math.min(ch,(t.numberOfChannels||1)-1));
+      for(var i=0;i<src.length&&i<out.length;i++) out[i]+=src[i];
+    });
+    var peak=0;for(var p=0;p<out.length;p++) peak=Math.max(peak,Math.abs(out[p]));
+    if(peak>1){for(var n=0;n<out.length;n++) out[n]/=peak;}
+  }
+  return mixed;
+}
+
+function resetVoiceSession(){
+  stopVoiceRec();
+  cleanupVoiceCapture();
+  voiceBuf=null;transcribedLyrics='';voiceAnalysis=null;analysisDetail=null;lastAudioBase64=null;lastAudioMimeType='audio/webm';vocalTracks=[];
+  document.getElementById('voicePlayRow').style.display='none';
+  document.getElementById('micStatus').textContent=t('mic_tap');
+  document.getElementById('micStatus').style.color='';
+  document.getElementById('micHint').textContent=t('mic_hint');
 }
 
 /* ═══════════════════════════════════════
