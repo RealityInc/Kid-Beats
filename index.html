@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>Lark 🐦</title>
+<title>Larkly</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@700;800;900&display=swap" rel="stylesheet">
 <style>
@@ -224,7 +224,7 @@ canvas#sheetMusic{display:block;width:100%;border-radius:8px}
 
   <div class="hdr">
     <div class="hdr-left">
-      <span class="hdr-bird">🐦</span>
+      <span class="hdr-bird">◉</span>
       <div>
         <div class="hdr-name">Larkly</div>
         <div class="hdr-tag">Sing. Tap. Make a song.</div>
@@ -240,17 +240,17 @@ canvas#sheetMusic{display:block;width:100%;border-radius:8px}
 
   <div class="modes">
     <button class="mode-btn mode-easy on" data-mode="easy" onclick="setMode('easy')">
-      <span class="mode-ico">🐣</span>
+      <span class="mode-ico">•</span>
       <span class="mode-name">EASY</span>
       <span class="mode-desc" id="md-easy">Drums + Melody</span>
     </button>
     <button class="mode-btn mode-med" data-mode="med" onclick="setMode('med')">
-      <span class="mode-ico">🦊</span>
+      <span class="mode-ico">◐</span>
       <span class="mode-name">MEDIUM</span>
       <span class="mode-desc" id="md-med">All tracks</span>
     </button>
     <button class="mode-btn mode-pro" data-mode="pro" onclick="setMode('pro')">
-      <span class="mode-ico">🦁</span>
+      <span class="mode-ico">◎</span>
       <span class="mode-name">PRO</span>
       <span class="mode-desc" id="md-pro">+ Swing &amp; more</span>
     </button>
@@ -273,7 +273,7 @@ canvas#sheetMusic{display:block;width:100%;border-radius:8px}
 
   <div class="nova-card" id="novaCard">
     <div class="nova-row">
-      <span class="nova-ico" id="novaIco">🐦</span>
+      <span class="nova-ico" id="novaIco">◉</span>
       <div>
         <div class="nova-name">LARK AI</div>
         <div class="nova-msg" id="novaMsg">Sing or hum something — I'll build a song around your voice! 🎵</div>
@@ -301,8 +301,8 @@ canvas#sheetMusic{display:block;width:100%;border-radius:8px}
       <div class="snap-dots" id="snapDots"></div>
       <div class="vfx-row">
         <button class="vfx-btn on" data-vf="normal"><span class="vi">🎵</span><span class="vl">Normal</span></button>
-        <button class="vfx-btn" data-vf="robot"><span class="vi">🤖</span><span class="vl">Robot</span></button>
-        <button class="vfx-btn" data-vf="alien"><span class="vi">👽</span><span class="vl">Alien</span></button>
+        <button class="vfx-btn" data-vf="robot"><span class="vi">R</span><span class="vl">Robot</span></button>
+        <button class="vfx-btn" data-vf="alien"><span class="vi">A</span><span class="vl">Alien</span></button>
         <button class="vfx-btn" data-vf="echo"><span class="vi">🌌</span><span class="vl">Echo</span></button>
       </div>
       <div class="voice-play-row" id="voicePlayRow" style="display:none">
@@ -601,7 +601,7 @@ document.getElementById('startBtn').addEventListener('click', function() {
   document.getElementById('ul').style.display = 'none';
   buildGridUI(); buildWave(); startIdleWave();
   setLang(lang);
-  toast('🐦 Welcome to Lark!');
+  toast('◉ Welcome to Lark!');
 });
 document.addEventListener('visibilitychange', function() {
   if (document.visibilityState==='visible' && AC && AC.state==='suspended') AC.resume();
