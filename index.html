@@ -77,6 +77,7 @@ canvas#micWave{width:100%;height:52px;border-radius:12px;background:rgba(255,255
 .voice-character{width:100%;height:120px;border-radius:20px;background:radial-gradient(circle at 30% 30%,#fff,#ffd3e4);overflow:hidden;border:2px solid rgba(255,255,255,.7)}
 .snap-dots{position:relative;height:42px;border-radius:14px;background:rgba(255,255,255,.45);overflow:hidden}
 .snap-dot{position:absolute;top:13px;width:14px;height:14px;border-radius:50%;background:#c04070;transition:left .2s ease,transform .2s ease}
+.mascot{position:fixed;right:10px;bottom:92px;font-size:2rem;z-index:90;transition:transform .15s ease}
 
 /* Voice FX */
 .vfx-row{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px}
@@ -211,7 +212,7 @@ canvas#sheetMusic{display:block;width:100%;border-radius:8px}
 <!-- UNLOCK -->
 
 <div id="ul">
-  <div class="ul-bird">◉</div>
+  <div class="ul-bird">🐦</div>
   <div class="ul-name">Larkly</div>
   <div class="ul-tag">Sing. Tap. Make a song.</div>
   <button class="ul-btn" id="startBtn">Let's sing! 🎵</button>
@@ -430,6 +431,7 @@ canvas#sheetMusic{display:block;width:100%;border-radius:8px}
   <button class="pbar-stop" id="stopBtn">⏹</button>
   <button class="pbar-play" id="pbarPlay">▶</button>
 </div>
+<div class="mascot" id="mascot">🐦</div>
 
 <div class="toast" id="toast"></div>
 
@@ -494,7 +496,6 @@ var playing = false, seqStep = 0, seqTimer = null;
 var metroOn = false, metroTimer = null, metroBeat = 0;
 var quantOn = false, timeSig = 4;
 var snapVisual=0.5;
-var alienEnergy=0, alienLastHit=0;
 var currentMode = 'easy';
 var lang = localStorage.getItem('lark_lang') || 'en';
 
@@ -802,9 +803,7 @@ function startSeq(){
       chordRows.forEach(function(n,r){if(chordGrid[r][s]) playChord(n,grv,(stepDur/1000)*1.8,masterVol*0.5);});
     }
     if(voiceBuf&&s===0&&seqStep%(STEPS*2)===0) playVoice(0);
-    alienLastHit=s;
-    if(s%4===0)alienEnergy=Math.min(1,alienEnergy+0.45);
-    else if(s%2===1)alienEnergy=Math.min(1,alienEnergy+0.2);
+    var m=document.getElementById('mascot');if(m){if(s%4===0){m.style.transform='translateY(-10px) scale(1.2)';}else if(s%2===1){m.style.transform='translateY(-3px) rotate(-8deg)';}setTimeout(function(){m.style.transform='';},140);}
     /* Lyric highlight */
     var lyricLines=document.querySelectorAll('.nova-lyric-line');
     if(lyricLines.length){
@@ -847,35 +846,16 @@ if(grSlider) grSlider.addEventListener('input',function(){groove=parseInt(this.v
 document.getElementById('metroBtn').addEventListener('click',function(){if(!AC){toast('Tap Let\'s sing first!');return;}metroOn?stopMetro():startMetro();this.classList.toggle('on',metroOn);});
 document.getElementById('quantBtn').addEventListener('click',function(){quantOn=!quantOn;this.classList.toggle('on',quantOn);toast(quantOn?'⚡ Quantize ON':'Quantize off');});
 function drawVoiceCharacter(level){
-  var c=document.getElementById('voiceBlobMain');if(!c)return;var x=c.getContext('2d'),w=c.width,h=c.height,t=performance.now()*0.001;
-  var pitchHz=(voiceAnalysis&&voiceAnalysis.avgPitch)||220;
-  var pitchNorm=Math.max(0,Math.min(1,(pitchHz-120)/500));
-  var amp=Math.max(0.05,Math.min(1,level||0.1));
-  var stable=(snapVisual*0.85)+(quantOn?0.15:0);
-  var distortion=(1-stable)*(playing?0.22:0.12);
-  var baseR=36+amp*18+alienEnergy*8;
-  var cx=w*0.5,cy=h*0.52 + (playing?Math.sin(t*(bpm/60)*2*Math.PI)*4:Math.sin(t*1.2)*3);
-  var hue=160+(pitchNorm*70);
-  x.clearRect(0,0,w,h);
-  x.shadowBlur=18+amp*16;x.shadowColor='hsla('+hue+',85%,55%,0.55)';
-  x.beginPath();
-  for(var a=0;a<=Math.PI*2+0.001;a+=Math.PI/36){
-    var edgeNoise=Math.sin(a*3+t*2.2)*distortion + Math.sin(a*7+t*1.3)*distortion*0.7;
-    var r=baseR*(1+edgeNoise);
-    var px=cx+Math.cos(a)*r, py=cy+Math.sin(a)*r*0.9;
-    if(a===0)x.moveTo(px,py);else x.lineTo(px,py);
-  }
-  x.closePath();
-  x.fillStyle='hsl('+hue+',75%,'+(55+pitchNorm*10)+'%)';x.fill();
-  x.shadowBlur=0;
-  x.fillStyle='rgba(7,35,31,.85)';x.beginPath();x.arc(cx-10,cy-4,3,0,Math.PI*2);x.arc(cx+10,cy-4,3,0,Math.PI*2);x.fill();
+  var c=document.getElementById('voiceBlobMain');if(!c)return;var x=c.getContext('2d'),w=c.width,h=c.height;
+  x.clearRect(0,0,w,h);x.fillStyle='rgba(255,220,235,.8)';x.fillRect(0,0,w,h);
+  x.beginPath();for(var i=0;i<=w;i+=10){var y=h*0.5+Math.sin((i/35)+(performance.now()/230))*8+(Math.sin(i/14)*level*30);if(i===0)x.moveTo(i,y);else x.lineTo(i,y);}x.strokeStyle='#c04070';x.lineWidth=5;x.stroke();
 }
 function renderSnapDots(){
   var host=document.getElementById('snapDots');if(!host)return;host.innerHTML='';for(var i=0;i<12;i++){var d=document.createElement('div');d.className='snap-dot';var orig=(i/12)*96+Math.sin(i*2.1)*(1-snapVisual)*8;var grid=(i/12)*96;var pos=orig+((grid-orig)*snapVisual);d.style.left=pos+'%';host.appendChild(d);}
 }
-function animateAlien(){alienEnergy*=0.9;drawVoiceCharacter(0.15+alienEnergy);requestAnimationFrame(animateAlien);}
 document.getElementById('snapMain').addEventListener('input',function(){snapVisual=this.value/100;renderSnapDots();});
-renderSnapDots();drawVoiceCharacter(0.2);animateAlien();
+setInterval(function(){if(!playing)return;drawVoiceCharacter(0.5);},(60/Math.max(60,bpm))*1000);
+renderSnapDots();drawVoiceCharacter(0.2);
 document.querySelectorAll('.ts-btn').forEach(function(b){b.addEventListener('click',function(){timeSig=parseInt(this.dataset.ts);document.querySelectorAll('.ts-btn').forEach(function(x){x.classList.remove('on');});this.classList.add('on');if(playing){stopSeq();startSeq();}});});
 
 /* Instrument selectors */
