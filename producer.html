@@ -410,6 +410,15 @@ var muted={beats:false,voice:false,melody:false,fx:false};
 var showBeats=true,showMel=true,prRecording=false;
 var prEvents=[],prMaxSec=20,prRAF=null;
 var currentNoteIdx=-1;
+function setRecState(s){recState=s;}
+function resetRecorderState(){
+  if(mediaRecorder&&mediaRecorder.state!=='inactive'){try{mediaRecorder.stop();}catch(e){}}
+  if(recStream){recStream.getTracks().forEach(function(track){track.stop();});recStream=null;}
+  mediaRecorder=null;recChunks=[];audioBlob=null;audioUrl=null;isRecording=false;voiceBuf=null;voiceOnsets=[];voiceSlices=[];
+  document.getElementById('recBtn').classList.remove('recording');document.getElementById('recBtn').textContent='🎤';
+  document.getElementById('recStatus').textContent='TAP TO RECORD';document.getElementById('recStatus').classList.remove('on');
+}
+function resetAIState(){transcript=null;detectedNotes=null;aiInputAudio=null;window._novaPat=null;window._novaMel=null;}
 
 var NF={C:261.63,D:293.66,E:329.63,G:392,A:440,B:493.88};
 var NC={C:'#ff3dac',D:'#ff8c3d',E:'#f9ff3d',G:'#00ffca',A:'#00d2ff',B:'#b06eff'};
@@ -538,7 +547,7 @@ document.getElementById('novaGo').addEventListener('click',buildSong);
 document.getElementById('novaIn').addEventListener('keydown',function(e){if(e.key==='Enter')buildSong();});
 
 function buildSong(){
-  var prompt=document.getElementById('novaIn').value.trim();if(!prompt){toast('Type a track idea!');return;}
+  var prompt=document.getElementById('novaIn').value.trim();if(!prompt){toast('Type a track idea!');return;}if(aiInputAudio)console.log('AI input blob size:',aiInputAudio.size);
   var out=document.getElementById('novaOut'),btn=document.getElementById('novaGo');
   out.innerHTML='<div style="text-align:center;padding:10px"><div style="width:18px;height:18px;border:2px solid rgba(255,61,172,.2);border-top-color:#ff3dac;border-radius:50%;animation:spin .7s linear infinite;display:inline-block"></div></div>';
   btn.disabled=true;
@@ -715,7 +724,7 @@ function startPlayback(){
 function stopPlayback(){playing=false;clearInterval(seqTimer);seqStep=0;document.getElementById('playBtn').textContent='▶';currentNoteIdx=-1;renderSheet(-1);nova('Studio ready. <b>Great work!</b> 🎛️');}
 document.getElementById('stopBtn').addEventListener('click',stopPlayback);
 document.getElementById('transportRec').addEventListener('click',function(){if(isRecording)stopRec();else startRec();});
-document.getElementById('clrAll').addEventListener('click',function(){stopPlayback();melody=[];voiceBuf=null;window._novaPat=null;window._novaMel=null;renderSeq();renderSheet(-1);prEvents=[];document.getElementById('recHint').textContent='Record your voice — play it back with effects!';nova('All clear! Start a new track. 🎛️');toast('🗑 Cleared!');});
+document.getElementById('clrAll').addEventListener('click',function(){stopPlayback();melody=[];resetRecorderState();resetAIState();renderSeq();renderSheet(-1);prEvents=[];document.getElementById('recHint').textContent='Record your voice — play it back with effects!';setRecState('idle');nova('All clear! Start a new track. 🎛️');toast('🗑 Cleared!');});
 document.getElementById('bpmd').addEventListener('click',function(){bpm=Math.max(60,bpm-5);document.getElementById('bpml').textContent=bpm+' BPM';if(playing){clearInterval(seqTimer);startPlayback();}toast('BPM: '+bpm);});
 document.getElementById('bpmu').addEventListener('click',function(){bpm=Math.min(180,bpm+5);document.getElementById('bpml').textContent=bpm+' BPM';if(playing){clearInterval(seqTimer);startPlayback();}toast('BPM: '+bpm);});
 
