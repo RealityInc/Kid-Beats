@@ -67,13 +67,19 @@ body{font-family:'Nunito',sans-serif;background:#f0ebe0;color:#2d2417;min-height
 
 /* ═══ BIG MIC BUTTON ═══ */
 .voice-area{display:flex;flex-direction:column;align-items:center;gap:12px}
-.mic-big{width:90px;height:90px;border-radius:50%;border:none;background:linear-gradient(135deg,#e8604c,#c04070);cursor:pointer;font-size:2.2rem;display:flex;align-items:center;justify-content:center;-webkit-appearance:none;box-shadow:0 6px 24px rgba(200,60,100,.35);transition:transform .1s;flex-shrink:0}
+.mic-big{width:58px;height:58px;border-radius:50%;border:none;background:linear-gradient(135deg,#e8604c,#c04070);cursor:pointer;font-size:1.3rem;display:flex;align-items:center;justify-content:center;-webkit-appearance:none;box-shadow:0 6px 24px rgba(200,60,100,.35);transition:transform .1s;flex-shrink:0}
 .mic-big:active{transform:scale(.92)}
 .mic-big.recording{animation:micPulse .6s ease-in-out infinite}
 @keyframes micPulse{0%,100%{transform:scale(1);box-shadow:0 0 0 0 rgba(200,60,100,.4)}50%{transform:scale(1.06);box-shadow:0 0 0 18px rgba(200,60,100,0)}}
 .mic-status{font-size:.85rem;font-weight:800;color:#c04070;text-align:center;min-height:20px}
 .mic-hint{font-size:.78rem;font-weight:700;color:#d080a0;text-align:center;line-height:1.4}
 canvas#micWave{width:100%;height:52px;border-radius:12px;background:rgba(255,255,255,.5);display:block;margin-top:4px}
+.voice-character{width:100%;height:120px;border-radius:20px;background:radial-gradient(circle at 30% 30%,#fff,#ffd3e4);overflow:hidden;border:2px solid rgba(255,255,255,.7)}
+.snap-dots{position:relative;height:42px;border-radius:14px;background:rgba(255,255,255,.45);overflow:hidden}
+.snap-dot{position:absolute;top:13px;width:14px;height:14px;border-radius:50%;background:#c04070;transition:left .2s ease,transform .2s ease}
+.alien-blob{position:fixed;right:10px;bottom:88px;width:66px;height:66px;border-radius:52% 48% 55% 45%;background:radial-gradient(circle at 35% 30%,#d4fff6,#49d8b8 60%,#17856f);z-index:90;box-shadow:0 8px 20px rgba(24,133,111,.35);transition:transform .16s ease,border-radius .16s ease,filter .16s ease}
+.alien-blob::before,.alien-blob::after{content:'';position:absolute;top:24px;width:8px;height:8px;border-radius:50%;background:#043c34}
+.alien-blob::before{left:21px}.alien-blob::after{left:37px}
 
 /* Voice FX */
 .vfx-row{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px}
@@ -209,8 +215,8 @@ canvas#sheetMusic{display:block;width:100%;border-radius:8px}
 
 <div id="ul">
   <div class="ul-bird">🐦</div>
-  <div class="ul-name">Lark</div>
-  <div class="ul-tag">Sing. Hum. Make music.</div>
+  <div class="ul-name">Larkly</div>
+  <div class="ul-tag">Sing. Tap. Make a song.</div>
   <button class="ul-btn" id="startBtn">Let's sing! 🎵</button>
 </div>
 
@@ -222,8 +228,8 @@ canvas#sheetMusic{display:block;width:100%;border-radius:8px}
     <div class="hdr-left">
       <span class="hdr-bird">🐦</span>
       <div>
-        <div class="hdr-name">Lark</div>
-        <div class="hdr-tag">Sing. Hum. Make music.</div>
+        <div class="hdr-name">Larkly</div>
+        <div class="hdr-tag">Sing. Tap. Make a song.</div>
       </div>
     </div>
     <div style="display:flex;gap:6px">
@@ -291,6 +297,10 @@ canvas#sheetMusic{display:block;width:100%;border-radius:8px}
         </div>
       </div>
       <canvas id="micWave" width="400" height="52"></canvas>
+      <div class="voice-character"><canvas id="voiceBlobMain" width="400" height="120" style="width:100%;height:120px"></canvas></div>
+      <div style="width:100%;font-weight:900;font-size:.7rem;color:#a55">Snap to Beat</div>
+      <input type="range" id="snapMain" min="0" max="100" value="50" style="width:100%">
+      <div class="snap-dots" id="snapDots"></div>
       <div class="vfx-row">
         <button class="vfx-btn on" data-vf="normal"><span class="vi">🎵</span><span class="vl">Normal</span></button>
         <button class="vfx-btn" data-vf="robot"><span class="vi">🤖</span><span class="vl">Robot</span></button>
@@ -423,6 +433,7 @@ canvas#sheetMusic{display:block;width:100%;border-radius:8px}
   <button class="pbar-stop" id="stopBtn">⏹</button>
   <button class="pbar-play" id="pbarPlay">▶</button>
 </div>
+<div class="alien-blob" id="alienBlob"></div>
 
 <div class="toast" id="toast"></div>
 
@@ -486,6 +497,8 @@ var bpm = 100, masterVol = 0.8, groove = 0;
 var playing = false, seqStep = 0, seqTimer = null;
 var metroOn = false, metroTimer = null, metroBeat = 0;
 var quantOn = false, timeSig = 4;
+var snapVisual=0.5;
+var alienEnergy=0, alienLastHit=0;
 var currentMode = 'easy';
 var lang = localStorage.getItem('lark_lang') || 'en';
 
@@ -793,6 +806,9 @@ function startSeq(){
       chordRows.forEach(function(n,r){if(chordGrid[r][s]) playChord(n,grv,(stepDur/1000)*1.8,masterVol*0.5);});
     }
     if(voiceBuf&&s===0&&seqStep%(STEPS*2)===0) playVoice(0);
+    alienLastHit=s;
+    if(s%4===0)alienEnergy=Math.min(1,alienEnergy+0.45);
+    else if(s%2===1)alienEnergy=Math.min(1,alienEnergy+0.2);
     /* Lyric highlight */
     var lyricLines=document.querySelectorAll('.nova-lyric-line');
     if(lyricLines.length){
@@ -834,6 +850,33 @@ if(grSlider) grSlider.addEventListener('input',function(){groove=parseInt(this.v
 /* Metro + quant */
 document.getElementById('metroBtn').addEventListener('click',function(){if(!AC){toast('Tap Let\'s sing first!');return;}metroOn?stopMetro():startMetro();this.classList.toggle('on',metroOn);});
 document.getElementById('quantBtn').addEventListener('click',function(){quantOn=!quantOn;this.classList.toggle('on',quantOn);toast(quantOn?'⚡ Quantize ON':'Quantize off');});
+function drawVoiceCharacter(level){
+  var c=document.getElementById('voiceBlobMain');if(!c)return;var x=c.getContext('2d'),w=c.width,h=c.height;
+  x.clearRect(0,0,w,h);x.fillStyle='rgba(255,220,235,.8)';x.fillRect(0,0,w,h);
+  x.beginPath();for(var i=0;i<=w;i+=10){var y=h*0.5+Math.sin((i/35)+(performance.now()/230))*8+(Math.sin(i/14)*level*30);if(i===0)x.moveTo(i,y);else x.lineTo(i,y);}x.strokeStyle='#c04070';x.lineWidth=5;x.stroke();
+}
+function renderSnapDots(){
+  var host=document.getElementById('snapDots');if(!host)return;host.innerHTML='';for(var i=0;i<12;i++){var d=document.createElement('div');d.className='snap-dot';var orig=(i/12)*96+Math.sin(i*2.1)*(1-snapVisual)*8;var grid=(i/12)*96;var pos=orig+((grid-orig)*snapVisual);d.style.left=pos+'%';host.appendChild(d);}
+}
+function animateAlien(){
+  var a=document.getElementById('alienBlob');if(!a)return;
+  var beatMs=(60/Math.max(60,bpm))*1000;
+  var snap=snapVisual;
+  var stable=snap*0.85 + (quantOn?0.15:0);
+  var jitter=(1-stable)*(playing?5:2);
+  var bob=playing?Math.sin(performance.now()/beatMs*6.283)*6:Math.sin(performance.now()/1300)*3;
+  var jx=(Math.random()-0.5)*jitter, jy=(Math.random()-0.5)*jitter;
+  var scale=1 + alienEnergy*0.22 + (playing?0.04:0);
+  var hue=stable>0.7?8:-8;
+  a.style.transform='translate('+(jx)+'px,'+(bob+jy)+'px) scale('+scale+')';
+  a.style.borderRadius=(48+stable*10)+'% '+(52-stable*8)+'% '+(55+stable*6)+'% '+(45+stable*6)+'%';
+  a.style.filter='hue-rotate('+hue+'deg) saturate('+(1+stable*0.35)+')';
+  alienEnergy*=0.88;
+  requestAnimationFrame(animateAlien);
+}
+document.getElementById('snapMain').addEventListener('input',function(){snapVisual=this.value/100;renderSnapDots();});
+setInterval(function(){if(!playing)return;drawVoiceCharacter(0.5);},(60/Math.max(60,bpm))*1000);
+renderSnapDots();drawVoiceCharacter(0.2);animateAlien();
 document.querySelectorAll('.ts-btn').forEach(function(b){b.addEventListener('click',function(){timeSig=parseInt(this.dataset.ts);document.querySelectorAll('.ts-btn').forEach(function(x){x.classList.remove('on');});this.classList.add('on');if(playing){stopSeq();startSeq();}});});
 
 /* Instrument selectors */
@@ -1000,12 +1043,14 @@ function drawMicWave(){
   function draw(){
     micAnimRAF=requestAnimationFrame(draw);
     micAnalyser.getByteTimeDomainData(buf);
+    var amp=0;for(var ai=0;ai<buf.length;ai++)amp+=Math.abs(buf[ai]-128);amp=Math.min(1,amp/(buf.length*42));
     var W=canvas.width,H=canvas.height;
     ctx.clearRect(0,0,W,H);ctx.fillStyle='rgba(255,255,255,.5)';ctx.fillRect(0,0,W,H);
     ctx.strokeStyle='#c04070';ctx.lineWidth=2;ctx.beginPath();
     var sw=W/buf.length,x=0;
     for(var i=0;i<buf.length;i++){var v=buf[i]/128,y=v*H/2;i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);x+=sw;}
     ctx.stroke();
+    drawVoiceCharacter(amp);
   }
   draw();
 }
@@ -1013,6 +1058,7 @@ function stopMicWave(){
   cancelAnimationFrame(micAnimRAF);
   var canvas=document.getElementById('micWave');
   if(canvas){var ctx=canvas.getContext('2d');ctx.clearRect(0,0,canvas.width,canvas.height);}
+  drawVoiceCharacter(0.2);
 }
 
 /* ── AUTOCORRELATION PITCH DETECTION ── */
