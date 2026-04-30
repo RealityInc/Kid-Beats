@@ -199,8 +199,28 @@ canvas#pianoRoll{display:block;width:100%;border-radius:10px;background:#060914}
       <button class="vfx"    data-vf="robot" >🤖<span>Robot</span></button>
       <button class="vfx"    data-vf="alien" >👽<span>Alien</span></button>
       <button class="vfx"    data-vf="echo"  >🌌<span>Echo</span></button>
+      <button class="vfx"    data-vf="chipmunk"  >🐿️<span>Chipmunk</span></button>
+      <button class="vfx"    data-vf="deep"  >🪨<span>Deep Voice</span></button>
+    </div>
+    <div style="margin-top:10px">
+      <label style="font-family:'Orbitron',monospace;font-size:.55rem;color:#00ffca">SNAP</label>
+      <input id="snapSlider" type="range" min="0" max="100" step="1" value="50" style="width:100%;min-height:42px">
+      <div id="snapLbl" style="font-size:.7rem;color:#3a5070">Lock to Beat: 50% · 1/8</div>
     </div>
   </div>
+  <details class="voice-card" style="margin-top:10px"><summary style="cursor:pointer;font-family:'Orbitron',monospace">Studio Tools</summary>
+    <div class="vfx-row" style="margin-top:10px">
+      <button class="vfx" id="mkSimple">🧽<span>Make Simpler</span></button>
+      <button class="vfx" id="mkBusy">🔥<span>Make Busier</span></button>
+      <button class="vfx" id="addKick">💥<span>Add Kick</span></button>
+      <button class="vfx" id="addClap">✨<span>Add Clap</span></button>
+      <button class="vfx" id="addHats">⚡<span>Add Hats</span></button>
+    </div>
+    <div style="margin-top:10px">
+      <label style="font-family:'Orbitron',monospace;font-size:.55rem;color:#00ffca">SQUELCH</label>
+      <input id="squelch" type="range" min="0" max="100" value="35" style="width:100%;min-height:42px">
+    </div>
+  </details>
 
   <div class="sec" id="sec-melody">Build a Melody 🎵</div>
   <div class="mc">
@@ -300,6 +320,9 @@ var lang=localStorage.getItem('bb_lang')||'en';
 var playing=false,bpm=120,seqTimer=null,seqStep=0;
 var melody=[],activeFX='normal',voiceFX='normal';
 var voiceBuf=null,isRecording=false,mediaRecorder=null,recChunks=[];
+var voiceOnsets=[],voiceSlices=[];
+var snapStrength=0.5,snapGrid='1/8',humanize=true;
+var bassPreset='Bouncy Bass',chordPreset='Minimal Stab',squelchAmt=0.35;
 var prEvents=[],prMaxSec=18,prRAF=null;
 var NF={C:261.63,D:293.66,E:329.63,G:392,A:440,B:493.88};
 var NC={C:'#ff3dac',D:'#ff8c3d',E:'#f9ff3d',G:'#00ffca',A:'#00d2ff',B:'#b06eff'};
@@ -309,7 +332,7 @@ var NOTE_ROW={B:0,A:1,G:2,E:3,D:4,C:5};
 var BEAT_NAMES=['kick','snare','hihat','clap','bloop','zap'];
 var BEAT_ROW={kick:6,snare:7,hihat:8,clap:9,bloop:10,zap:11};
 var BEAT_COLORS={kick:'#ff3dac',snare:'#00d2ff',hihat:'#00ffca',clap:'#f9ff3d',bloop:'#7fff6e',zap:'#ff8c3d'};
-var SEQ_PAT=['kick','hihat','snare','hihat','kick','hihat','snare','clap'];
+var SEQ_PAT=['kick',null,null,'hihat','kick',null,'snare',null,'kick',null,null,'hihat','kick',null,'clap',null];
 var NOTE_STAFF={C:0,D:1,E:2,G:4,A:5,B:6};
 var volumes={beats:0.8,voice:0.8,melody:0.8};
 
@@ -364,8 +387,8 @@ function playMelNote(note,off,dur){
   withAC(function(){
     var t=AC.currentTime+(off||0),M=masterOut();
     var o1=AC.createOscillator(),o2=AC.createOscillator(),g=AC.createGain();
-    o1.type='sine';o1.frequency.value=freq;
-    o2.type='triangle';o2.frequency.value=freq*2;
+    o1.type='sawtooth';o1.frequency.value=freq;
+    o2.type='square';o2.frequency.value=freq*(1.99+(squelchAmt*0.03));
     var g2=AC.createGain();g2.gain.value=0.12;
     o1.connect(g);o2.connect(g2);g2.connect(g);
     g.gain.setValueAtTime(0.0001,t);g.gain.linearRampToValueAtTime(0.5*volumes.melody,t+0.03);
@@ -387,7 +410,7 @@ function startRec(){
     mediaRecorder.ondataavailable=function(e){if(e.data.size>0)recChunks.push(e.data);};
     mediaRecorder.onstop=function(){
       var blob=new Blob(recChunks,{type:'audio/webm'});
-      blob.arrayBuffer().then(function(ab){AC.decodeAudioData(ab,function(buf){voiceBuf=buf;document.getElementById('recHint').textContent='Voice saved! It will play in your song.';toast('🎤 Voice recorded!');},function(){toast('Could not decode — try again');});});
+      blob.arrayBuffer().then(function(ab){AC.decodeAudioData(ab,function(buf){voiceBuf=buf;voiceOnsets=detectOnsets(buf);applySnapToVoice();document.getElementById('recHint').textContent='Voice saved! It will play in your song.';toast('🎤 Voice recorded!');},function(){toast('Could not decode — try again');});});
       stream.getTracks().forEach(function(t){t.stop();});
     };
     mediaRecorder.start();isRecording=true;
@@ -397,6 +420,19 @@ function startRec(){
   }).catch(function(e){toast('Mic not available: '+e.message);});
 }
 function stopRec(){if(mediaRecorder&&mediaRecorder.state!=='inactive')mediaRecorder.stop();isRecording=false;document.getElementById('recBtn').classList.remove('recording');document.getElementById('recBtn').textContent='🎤';document.getElementById('recStatus').textContent='TAP TO RECORD';document.getElementById('recStatus').classList.remove('on');}
+function detectOnsets(buf){
+  var d=buf.getChannelData(0),sr=buf.sampleRate,hop=256,win=512,energy=[],on=[];
+  for(var i=0;i+win<d.length;i+=hop){var e=0;for(var j=0;j<win;j++){var v=d[i+j];e+=v*v;}energy.push(e);}
+  for(var k=2;k<energy.length;k++){var flux=Math.max(0,energy[k]-energy[k-1]);if(flux>energy[k-1]*0.35){on.push((k*hop)/sr);}}
+  return on.slice(0,64);
+}
+function applySnapToVoice(){
+  if(!voiceBuf)return;
+  var beat=60/bpm,res=snapGrid==='1/4'?1:(snapGrid==='1/8'?2:4),step=beat/res;
+  voiceSlices=voiceOnsets.map(function(t){var g=Math.round(t/step)*step;return t+((g-t)*snapStrength);});
+  humanize=snapStrength<1;
+  document.getElementById('snapLbl').textContent='Lock to Beat: '+Math.round(snapStrength*100)+'% · '+snapGrid;
+}
 function playVoice(off){
   if(!voiceBuf)return;
   withAC(function(){
@@ -404,10 +440,13 @@ function playVoice(off){
     var src=AC.createBufferSource();src.buffer=voiceBuf;
     var g=AC.createGain();g.gain.value=volumes.voice;
     if(voiceFX==='alien'){src.playbackRate.value=1.8;src.connect(g);g.connect(M);}
+    else if(voiceFX==='chipmunk'){src.playbackRate.value=2.1;src.connect(g);g.connect(M);}
+    else if(voiceFX==='deep'){src.playbackRate.value=0.68;src.connect(g);g.connect(M);}
     else if(voiceFX==='robot'){src.playbackRate.value=0.5;var ws=AC.createWaveShaper(),cv=new Float32Array(256);for(var i=0;i<256;i++){var x=i*2/256-1;cv[i]=(Math.PI+120)*x/(Math.PI+120*Math.abs(x));}ws.curve=cv;src.connect(ws);ws.connect(g);g.connect(M);}
     else if(voiceFX==='echo'){var dl=AC.createDelay(1);dl.delayTime.value=0.35;var fb=AC.createGain();fb.gain.value=0.35;src.connect(g);g.connect(M);g.connect(dl);dl.connect(fb);fb.connect(dl);dl.connect(M);}
     else{src.connect(g);g.connect(M);}
     src.start(t);
+    if(voiceSlices.length){voiceSlices.forEach(function(st){var s=AC.createBufferSource();s.buffer=voiceBuf;s.connect(g);var jit=(humanize?((Math.random()*0.02)-0.01):0);s.start(t+st+jit,st,Math.min(0.16,voiceBuf.duration-st));});}
   });
 }
 document.querySelectorAll('.vfx').forEach(function(ch){ch.addEventListener('click',function(){document.querySelectorAll('.vfx').forEach(function(c){c.classList.remove('on');});ch.classList.add('on');voiceFX=ch.dataset.vf;toast('Voice: '+ch.querySelector('span').textContent);});});
@@ -655,6 +694,14 @@ else if(a==='Make it spooky'){activeFX='alien';document.querySelectorAll('.fxc')
 else if(a==='Fix timing'){window._novaPat=['kick','hihat','snare','hihat','kick','hihat','snare','hihat'];nova('I fixed the timing so the groove is steady.');}
 else {buildSong();nova('I built a full song with drums and melody.');} toast('🤖 '+a);});});
 var oldStartRec=startRec; startRec=function(){var c=3;var el=document.getElementById('recordCount');el.textContent='';var iv=setInterval(function(){el.textContent=c>0?('Recording in '+c+'...'):'Recording...';c--;if(c<0){clearInterval(iv);el.textContent='';oldStartRec();}},650);};
+document.getElementById('snapSlider').addEventListener('input',function(){snapStrength=(this.value/100);snapGrid=snapStrength>0.66?'1/16':(snapStrength>0.33?'1/8':'1/4');applySnapToVoice();nova('I locked your voice to the beat.');});
+document.getElementById('squelch').addEventListener('input',function(){squelchAmt=(this.value/100);nova('I added a bouncy bass.');});
+['addKick','addClap','addHats','mkSimple','mkBusy'].forEach(function(id){var el=document.getElementById(id);if(!el)return;el.addEventListener('click',function(){var p=(window._novaPat||SEQ_PAT).slice();if(id==='addKick'){[0,8,12].forEach(i=>p[i]='kick');nova('I added more kick.');}
+if(id==='addClap'){[4,12].forEach(i=>p[i]='clap');nova('I added claps.');}
+if(id==='addHats'){for(var i=1;i<p.length;i+=2)p[i]='hihat';nova('I added hats.');}
+if(id==='mkSimple'){for(var i=0;i<p.length;i++){if(i%4!==0)p[i]=null;}nova('I made the drums simpler.');}
+if(id==='mkBusy'){for(var i=0;i<p.length;i++){if(!p[i])p[i]=(i%2?'hihat':'kick');}nova('I made the drums busier.');}
+window._novaPat=p;toast('Updated groove');});});
 
 </script>
 </body>
