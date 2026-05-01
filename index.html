@@ -15,7 +15,7 @@ body{font-family:'Nunito',sans-serif;background:#f0ebe0;color:#2d2417;min-height
 
 /* ═══ UNLOCK SCREEN ═══ */
 #ul{position:fixed;inset:0;z-index:9999;background:linear-gradient(160deg,#fff8f0,#ffeedd);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:32px;text-align:center}
-.ul-bird{font-size:5rem;animation:birdBob 1.2s ease-in-out infinite alternate}
+.ul-logo{width:78px;height:78px;border-radius:50%;background:radial-gradient(circle at 30% 30%,#fff,#ffb4d1);border:3px solid rgba(255,255,255,.65);animation:birdBob 1.2s ease-in-out infinite alternate}
 @keyframes birdBob{from{transform:translateY(0) rotate(-5deg)}to{transform:translateY(-14px) rotate(5deg)}}
 .ul-name{font-size:clamp(2.4rem,9vw,3.6rem);font-weight:900;color:#e8604c;letter-spacing:-1px}
 .ul-tag{font-size:1rem;font-weight:700;color:#b08060;letter-spacing:.5px}
@@ -28,7 +28,7 @@ body{font-family:'Nunito',sans-serif;background:#f0ebe0;color:#2d2417;min-height
 /* ═══ HEADER ═══ */
 .hdr{display:flex;align-items:center;justify-content:space-between;padding:16px 0 12px}
 .hdr-left{display:flex;align-items:center;gap:10px}
-.hdr-bird{font-size:2rem;animation:birdBob 3s ease-in-out infinite alternate}
+.hdr-logo{width:34px;height:34px;border-radius:50%;background:radial-gradient(circle at 30% 30%,#fff,#ffd0e1);border:2px solid rgba(255,255,255,.7);animation:birdBob 3s ease-in-out infinite alternate;display:inline-block}
 .hdr-name{font-size:1.5rem;font-weight:900;color:#e8604c;letter-spacing:-0.5px}
 .hdr-tag{font-size:.7rem;font-weight:700;color:#b08060;letter-spacing:1px;text-transform:uppercase}
 .lang-btn{background:rgba(0,0,0,.06);border:none;border-radius:100px;padding:5px 12px;font-family:‘Nunito’,sans-serif;font-size:.7rem;font-weight:800;color:#888;cursor:pointer;-webkit-appearance:none}
@@ -794,6 +794,7 @@ function stopMetro(){metroOn=false;clearInterval(metroTimer);}
 ═══════════════════════════════════════ */
 function startSeq(){
   stopSeq(); playing=true;
+  alienEnergy=Math.max(alienEnergy,0.35);
   document.getElementById('playBtn').textContent='⏸';
   document.getElementById('pbarPlay').textContent='⏸';
   seqStep=0;
