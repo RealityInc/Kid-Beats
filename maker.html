@@ -329,8 +329,7 @@ function withAC(fn){if(!AC)return;if(AC.state==='running'){fn();return;}AC.resum
 var lang=localStorage.getItem('bb_lang')||'en';
 var playing=false,bpm=120,seqTimer=null,seqStep=0;
 var melody=[],activeFX='normal',voiceFX='normal';
-var voiceBuf=null,isRecording=false,mediaRecorder=null,recChunks=[],recStream=null,audioBlob=null,audioUrl=null;
-var recState='idle',transcript=null,detectedNotes=null,aiInputAudio=null;
+var voiceBuf=null,isRecording=false,mediaRecorder=null,recChunks=[];
 var voiceOnsets=[],voiceSlices=[];
 var snapStrength=0.5,snapGrid='1/8',humanize=true;
 var bassPreset='Bouncy Bass',chordPreset='Minimal Stab',squelchAmt=0.35;
@@ -441,12 +440,9 @@ function startRec(){
     (function blobLoop(){if(!micAnalyser||recState!=='recording')return;var arr=new Uint8Array(micAnalyser.fftSize);micAnalyser.getByteTimeDomainData(arr);var sum=0;for(var i=0;i<arr.length;i++)sum+=Math.abs(arr[i]-128);drawVoiceBlob(Math.min(1,sum/(arr.length*36)));micAnim=requestAnimationFrame(blobLoop);}());
     mediaRecorder.ondataavailable=function(e){if(e.data.size>0)recChunks.push(e.data);};
     mediaRecorder.onstop=function(){
-      audioBlob=new Blob(recChunks,{type:'audio/webm'});aiInputAudio=audioBlob;console.log('Recording stopped',audioBlob);
-      if(!audioBlob||audioBlob.size<800){toast('Recording too short. Try again.');setRecState('idle');resetRecorderState();return;}
-      audioBlob.arrayBuffer().then(function(ab){AC.decodeAudioData(ab,function(buf){voiceBuf=buf;voiceOnsets=detectOnsets(buf);applySnapToVoice();document.getElementById('recHint').textContent='Voice saved! It will play in your song.';setRecState('ready');toast('🎤 Voice recorded!');},function(){setRecState('idle');toast('Could not decode — try again');});});
-      if(recStream){recStream.getTracks().forEach(function(t){t.stop();});recStream=null;}
-      micAnalyser=null;if(micAnim)cancelAnimationFrame(micAnim);drawVoiceBlob(0.25);
-      mediaRecorder=null;
+      var blob=new Blob(recChunks,{type:'audio/webm'});
+      blob.arrayBuffer().then(function(ab){AC.decodeAudioData(ab,function(buf){voiceBuf=buf;voiceOnsets=detectOnsets(buf);applySnapToVoice();document.getElementById('recHint').textContent='Voice saved! It will play in your song.';toast('🎤 Voice recorded!');},function(){toast('Could not decode — try again');});});
+      stream.getTracks().forEach(function(t){t.stop();});
     };
     mediaRecorder.start();isRecording=true;
     document.getElementById('recBtn').classList.add('recording');document.getElementById('recBtn').textContent='⏹';
@@ -455,6 +451,20 @@ function startRec(){
   }).catch(function(e){setRecState('idle');toast('Mic not available: '+e.message);});
 }
 function stopRec(){if(mediaRecorder&&mediaRecorder.state!=='inactive')mediaRecorder.stop();isRecording=false;document.getElementById('recBtn').classList.remove('recording');document.getElementById('recBtn').textContent='🎤';document.getElementById('recStatus').textContent='PROCESSING';document.getElementById('recStatus').classList.remove('on');setRecState('processing');}
+function detectOnsets(buf){
+  var d=buf.getChannelData(0),sr=buf.sampleRate,hop=256,win=512,energy=[],on=[];
+  for(var i=0;i+win<d.length;i+=hop){var e=0;for(var j=0;j<win;j++){var v=d[i+j];e+=v*v;}energy.push(e);}
+  for(var k=2;k<energy.length;k++){var flux=Math.max(0,energy[k]-energy[k-1]);if(flux>energy[k-1]*0.35){on.push((k*hop)/sr);}}
+  return on.slice(0,64);
+}
+function applySnapToVoice(){
+  if(!voiceBuf)return;
+  var beat=60/bpm,res=snapGrid==='1/4'?1:(snapGrid==='1/8'?2:4),step=beat/res;
+  voiceSlices=voiceOnsets.map(function(t){var g=Math.round(t/step)*step;return t+((g-t)*snapStrength);});
+  humanize=snapStrength<1;
+  document.getElementById('snapLbl').textContent='Lock to Beat: '+Math.round(snapStrength*100)+'% · '+snapGrid;
+}
+function stopRec(){if(mediaRecorder&&mediaRecorder.state!=='inactive')mediaRecorder.stop();isRecording=false;document.getElementById('recBtn').classList.remove('recording');document.getElementById('recBtn').textContent='🎤';document.getElementById('recStatus').textContent='TAP TO RECORD';document.getElementById('recStatus').classList.remove('on');}
 function detectOnsets(buf){
   var d=buf.getChannelData(0),sr=buf.sampleRate,hop=256,win=512,energy=[],on=[];
   for(var i=0;i+win<d.length;i+=hop){var e=0;for(var j=0;j<win;j++){var v=d[i+j];e+=v*v;}energy.push(e);}
@@ -740,8 +750,6 @@ if(id==='addHats'){for(var i=1;i<p.length;i+=2)p[i]='hihat';nova('I added hats.'
 if(id==='mkSimple'){for(var i=0;i<p.length;i++){if(i%4!==0)p[i]=null;}nova('I made the drums simpler.');}
 if(id==='mkBusy'){for(var i=0;i<p.length;i++){if(!p[i])p[i]=(i%2?'hihat':'kick');}nova('I made the drums busier.');}
 window._novaPat=p;toast('Updated groove');});});
-[['sec-beats','.pgrid'],['sec-voice','.voice-card'],['sec-melody','.mc'],['sec-nova','.nova-build']].forEach(function(pair){var sec=document.getElementById(pair[0]);var card=document.querySelector(pair[1]);if(sec&&card){sec.addEventListener('click',function(){document.querySelectorAll('.pgrid,.voice-card,.mc,.nova-build').forEach(function(c){c.classList.add('focus-dim');});card.classList.remove('focus-dim');});}});
-drawVoiceBlob(0.15);
 
 </script>
 </body>
