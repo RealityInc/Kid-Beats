@@ -82,6 +82,7 @@ canvas#micWave{width:100%;height:52px;border-radius:12px;background:rgba(255,255
 /* Voice FX */
 .vfx-row{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px}
 .vfx-btn{background:rgba(255,255,255,.6);border:2px solid transparent;border-radius:14px;padding:7px 3px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;font-family:‘Nunito’,sans-serif;-webkit-appearance:none;transition:all .15s}
+.vfx-btn{min-height:58px;justify-content:center;width:100%}
 .vfx-btn span.vi{font-size:1.2rem}
 .vfx-btn span.vl{font-size:.58rem;font-weight:900;color:#aaa;text-transform:uppercase;letter-spacing:.5px}
 .vfx-btn.on{background:#fff;border-color:#c04070}.vfx-btn.on .vl{color:#c04070}
@@ -141,6 +142,10 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;heigh
 .seq-cell.beat1{background:rgba(255,255,255,.5)}
 /* Active step highlight during playback */
 .seq-cell.playing{outline:2px solid rgba(0,0,0,.3)}
+.seq-cell.on.playing{transform:scale(1.18);box-shadow:0 0 0 6px rgba(255,255,255,.24),0 0 18px rgba(232,96,76,.55)}
+.card-voice.recording{animation:recGlow .7s ease-in-out infinite alternate}
+@keyframes recGlow{from{box-shadow:0 0 0 rgba(192,64,112,0)}to{box-shadow:0 0 28px rgba(192,64,112,.45)}}
+.needs-voice{opacity:.5;pointer-events:none}
 
 /* Per-card cell colors when ON */
 .card-drums  .seq-cell.on{background:#e8604c;box-shadow:0 2px 8px rgba(232,96,76,.4)}
@@ -865,7 +870,9 @@ setupInstRow('bassInstRow',function(v){bassInstrument=v;toast('🎸 '+v);});
 setupInstRow('chordInstRow',function(v){chordInstrument=v;toast('🎹 '+v);});
 
 var varBtns=document.querySelectorAll('#variationRow .ctrl-toggle');
-varBtns.forEach(function(b,i){if(i===0)b.classList.add('on');b.addEventListener('click',function(){varBtns.forEach(function(x){x.classList.remove('on');});b.classList.add('on');selectedVariation=b.dataset.var||'base';toast('Variation: '+b.textContent);});});
+function updateVariationState(){var hasVoice=!!voiceBuf;varBtns.forEach(function(b,i){if(i===0){b.classList.remove('needs-voice');return;}b.classList.toggle('needs-voice',!hasVoice);b.title=!hasVoice?'Record voice to use this variation':'';});}
+varBtns.forEach(function(b,i){if(i===0)b.classList.add('on');b.addEventListener('click',function(){if(i>0&&!voiceBuf){toast('Record voice first to use this variation');return;}varBtns.forEach(function(x){x.classList.remove('on');});b.classList.add('on');selectedVariation=b.dataset.var||'base';toast('Variation: '+b.textContent);});});
+updateVariationState();
 
 
 /* ═══════════════════════════════════════
@@ -980,6 +987,7 @@ function startVoiceRec(){
       clearTimeout(recHardStopTimer);
       recHardStopTimer=setTimeout(function(){if(isRecording)stopVoiceRec();},MAX_RECORD_SECONDS*1000);
       document.getElementById('micBtn').classList.add('recording');
+      document.querySelector('.card-voice').classList.add('recording');
       document.getElementById('micBtn').textContent='⏹';
       document.getElementById('micStatus').textContent=t('mic_rec');
       document.getElementById('micStatus').style.color='#c04070';
@@ -1002,6 +1010,7 @@ function stopVoiceRec(){
   clearTimeout(recHardStopTimer);recHardStopTimer=null;
   document.getElementById('recTimer').textContent='00:00';
   document.getElementById('micBtn').classList.remove('recording');
+  document.querySelector('.card-voice').classList.remove('recording');
   document.getElementById('micBtn').textContent='🎤';
   document.getElementById('micStatus').style.color='';
   if(speechRecognizer){try{speechRecognizer.stop();}catch(e){}}
@@ -1011,6 +1020,12 @@ function showMicError(code){
   var msg=t('mic_'+code)||'🎤 Mic unavailable';
   document.getElementById('micStatus').textContent=msg;
   document.getElementById('micStatus').style.color='#e8604c';
+  if(code==='notfound'||code==='unavailable'){
+    drumGrid[0][0]=1;drumGrid[2][4]=1;drumGrid[0][8]=1;drumGrid[1][12]=1;
+    melGrid[3][0]=1;melGrid[4][4]=1;melGrid[5][8]=1;melGrid[4][12]=1;
+    renderAll();
+    document.getElementById('micHint').textContent='No mic? We loaded a sample loop so you can still play!';
+  }
   toast(msg);
 }
 
@@ -1122,6 +1137,7 @@ function applyGPTAnalysis(gpt, decodedBuf) {
     ? seq.length + ' notes detected in ' + detectedKey + ' at ' + gpt.detectedBPM + ' BPM'
     : 'Detected ' + detectedKey + ' -- tap Magic Song!';
   document.getElementById('voicePlayRow').style.display = 'flex';
+  updateVariationState();
   toast(hasNotes ? 'Melody transcribed! ' + detectedKey : 'Key detected: ' + detectedKey);
 }
 
@@ -1137,6 +1153,7 @@ function applyHybridAnalysis(va){
   if(va.uncertaintyMessage) msg='I had trouble hearing every note, so I used your rhythm and vibe too.';
   document.getElementById('micHint').textContent=msg;
   document.getElementById('voicePlayRow').style.display='flex';
+  updateVariationState();
   toast('Voice DNA captured!');
 }
 
@@ -1299,6 +1316,7 @@ function resetVoiceSession(){
   cleanupVoiceCapture();
   voiceBuf=null;transcribedLyrics='';voiceAnalysis=null;analysisDetail=null;lastAudioBase64=null;lastAudioMimeType='audio/webm';vocalTracks=[];
   document.getElementById('voicePlayRow').style.display='none';
+  updateVariationState();
   document.getElementById('micStatus').textContent=t('mic_tap');
   document.getElementById('micStatus').style.color='';
   document.getElementById('micHint').textContent=t('mic_hint');
