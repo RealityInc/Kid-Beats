@@ -360,6 +360,7 @@ canvas#sheetMusic{display:block;width:100%;border-radius:8px}
 
   <div class="card card-drums">
     <div class="card-title">🥁 <span id="dc-title">Drums</span></div>
+    <div class="ctrl-row" style="margin-bottom:8px"><span class="ctrl-lbl">DRUM STYLE</span><select id="drumStyleSelInDrums"><option>Soft</option><option selected>Bouncy</option><option>Stompy</option><option>Glitchy</option><option>Hip-Hop</option><option>Dancey</option></select></div>
     <div class="seq-grid" id="drumGrid"></div>
   </div>
 
@@ -655,11 +656,12 @@ function highlightStep(step) {
 function playDrum(rowIdx, vol) {
   if (!AC) return;
   vol = (vol || masterVol);
+  var cfg=drumStyleConfig(drumStyle);
   if (rowIdx === 0) { /* Kick */
     withAC(function() {
       var t=AC.currentTime,M=masterOut();
       var o1=AC.createOscillator(),g1=AC.createGain();
-      o1.type='sine';o1.frequency.setValueAtTime(55,t);o1.frequency.exponentialRampToValueAtTime(28,t+0.35);
+      o1.type=cfg.sampleTone==='heavy'?'triangle':'sine';o1.frequency.setValueAtTime(cfg.sampleTone==='club'?62:55,t);o1.frequency.exponentialRampToValueAtTime(28,t+0.35);
       g1.gain.setValueAtTime(0.9*vol,t);g1.gain.exponentialRampToValueAtTime(0.0001,t+0.35);
       o1.connect(g1);g1.connect(M);o1.start(t);o1.stop(t+0.38);
       var o2=AC.createOscillator(),g2=AC.createGain();
@@ -673,7 +675,7 @@ function playDrum(rowIdx, vol) {
       var fc=Math.floor(AC.sampleRate*0.18),buf=AC.createBuffer(1,fc,AC.sampleRate),d=buf.getChannelData(0);
       for(var i=0;i<fc;i++)d[i]=Math.random()*2-1;
       var src=AC.createBufferSource();src.buffer=buf;
-      var flt=AC.createBiquadFilter();flt.type='highpass';flt.frequency.value=1200;
+      var flt=AC.createBiquadFilter();flt.type='highpass';flt.frequency.value=cfg.sampleTone==='soft'?1800:(cfg.sampleTone==='dusty'?900:1200);
       var g=AC.createGain();g.gain.setValueAtTime(0.8*vol,t);g.gain.exponentialRampToValueAtValue(0.0001,t+0.18);
       src.connect(flt);flt.connect(g);g.connect(M);src.start(t);
       var o=AC.createOscillator(),og=AC.createGain();
@@ -687,7 +689,7 @@ function playDrum(rowIdx, vol) {
       var fc=Math.floor(AC.sampleRate*0.055),buf=AC.createBuffer(1,fc,AC.sampleRate),d=buf.getChannelData(0);
       for(var i=0;i<fc;i++)d[i]=Math.random()*2-1;
       var src=AC.createBufferSource();src.buffer=buf;
-      var flt=AC.createBiquadFilter();flt.type='bandpass';flt.frequency.value=9000;flt.Q.value=0.8;
+      var flt=AC.createBiquadFilter();flt.type='bandpass';flt.frequency.value=cfg.sampleTone==='soft'?7600:(cfg.sampleTone==='glitch'?11000:9000);flt.Q.value=cfg.sampleTone==='glitch'?1.4:0.8;
       var g=AC.createGain();g.gain.setValueAtTime(0.4*vol,t);g.gain.exponentialRampToValueAtValue(0.0001,t+0.055);
       src.connect(flt);flt.connect(g);g.connect(M);src.start(t);
     });
@@ -698,7 +700,7 @@ function playDrum(rowIdx, vol) {
         var fc=Math.floor(AC.sampleRate*0.09),buf=AC.createBuffer(1,fc,AC.sampleRate),d=buf.getChannelData(0);
         for(var j=0;j<fc;j++)d[j]=Math.random()*2-1;
         var src=AC.createBufferSource();src.buffer=buf;
-        var flt=AC.createBiquadFilter();flt.type='bandpass';flt.frequency.value=1200;flt.Q.value=0.8;
+        var flt=AC.createBiquadFilter();flt.type='bandpass';flt.frequency.value=cfg.sampleTone==='club'?900:1200;flt.Q.value=cfg.sampleTone==='club'?1.1:0.8;
         var g=AC.createGain();g.gain.setValueAtTime(0.7*vol,now+off);g.gain.exponentialRampToValueAtValue(0.0001,now+off+0.1);
         src.connect(flt);flt.connect(g);g.connect(M);src.start(now+off);
       })(ci*0.015);}
@@ -853,10 +855,15 @@ function startSeq() {
   seqTimer=setInterval(function(){
     var s=seqStep%STEPS;
     /* Apply groove: odd steps delayed slightly */
-    var grooveDelay=(s%2===1)?(groove/200)*stepDur:0;
+    var dcfg=drumStyleConfig(drumStyle);
+    var styleSwing=dcfg.swing||0;
+    var grooveDelay=(s%2===1)?((groove/200)+styleSwing)*stepDur:0;
 
     /* Drums */
-    drumRows.forEach(function(_,r){if(drumGrid[r][s])playDrum(r,masterVol);});
+    var dcfg=drumStyleConfig(drumStyle);
+    drumRows.forEach(function(_,r){if(drumGrid[r][s])playDrum(r,masterVol*dcfg.level);});
+    if(dcfg.autoHat && s%dcfg.hatEvery===0)playDrum(2,masterVol*0.45);
+    if(dcfg.fill && s>=12 && s%2===0)playDrum(3,masterVol*0.4);
     /* Melody */
     melRows.forEach(function(_,r){if(melGrid[r][s])playMelNote(melFreqs[r],grooveDelay,stepDur*1.8,masterVol*0.7);});
     /* Bass (med+) */
