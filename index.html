@@ -420,6 +420,17 @@ canvas#sheetMusic{display:block;width:100%;border-radius:8px}
     Every note sounds great — there are no wrong notes! 🌈
   </div>
 
+
+</div>
+<div class="tabsec" id="tab-studio">
+  <div class="card">
+    <div class="card-title">🎛️ Studio</div>
+    <div class="studio-grid" id="studioGrid"></div>
+    <div class="card-title" style="font-size:.75rem">Saved Loops</div>
+    <div id="studioLoopBank" class="studio-slots"></div>
+  </div>
+</div>
+
 </div><!-- /wrap -->
 
 <!-- PLAYBAR -->
@@ -885,6 +896,7 @@ function startSeq() {
     boomWave();
     seqStep++;
   },ms);
+  }catch(e){showAudioError(e.message||'transport failed');}
 }
 
 function stopSeq() {
@@ -1009,6 +1021,8 @@ function stopVoiceRec() {
   document.getElementById('micStatus').style.color = '';
   document.getElementById('micStatus').textContent = t('mic_tap');
 }
+
+function showAudioError(msg){AudioEngine.setState('error',msg);console.error('[audio error]',msg);toast('Audio error: '+msg);}
 
 function showMicError(code) {
   document.getElementById('micStatus').textContent = t('mic_'+code) || '🎤 Mic unavailable';
@@ -1212,6 +1226,7 @@ document.getElementById('magicBtn').addEventListener('click', function() {
 });
 
 function loadSong(song) {
+  console.log('song generated',song&&song.name,song&&song.bpm);AudioEngine.setState('generated',song&&song.name||'song');
   /* Update BPM */
   if (song.bpm) { bpm = Math.max(60,Math.min(180,song.bpm)); updateBPM(); }
 
