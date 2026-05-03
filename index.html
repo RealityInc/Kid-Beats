@@ -214,7 +214,7 @@ canvas#sheetMusic{display:block;width:100%;border-radius:8px}
   <div class="ul-bird">🐦</div>
   <div class="ul-name">Lark</div>
   <div class="ul-tag">Sing. Hum. Make music.</div>
-  <button class="ul-btn" id="startBtn">Let's sing! 🎵</button>
+  <button class="ul-btn" id="startBtn" type="button" onclick="window.beginApp && window.beginApp()">Let's sing! 🎵</button>
 </div>
 
 <div class="wrap" id="appWrap">
@@ -574,19 +574,21 @@ if(location.search.indexOf('debug=1')>-1){document.body.classList.add('debug-out
 document.getElementById('startBtn').addEventListener('click', function() {
   var Ctx = window.AudioContext || window.webkitAudioContext;
   if (!Ctx) { alert('Web Audio not supported — please use Safari or Chrome.'); return; }
-  try { AC = new Ctx(); } catch(e) { return; }
-  AC.resume().then(function() {
+  try { if(!AC) AC = new Ctx(); } catch(e) { console.error('audio init failed',e); return; }
+  withAC(function(){
     var o = AC.createOscillator(), g = AC.createGain();
     o.connect(g); g.connect(masterOut());
     g.gain.setValueAtTime(0.001, AC.currentTime);
     g.gain.exponentialRampToValueAtTime(0.0001, AC.currentTime + 0.1);
     o.start(AC.currentTime); o.stop(AC.currentTime + 0.1);
   });
-  document.getElementById('ul').style.display = 'none';
+  var ul=document.getElementById('ul');
+  if(ul){ul.style.pointerEvents='none';ul.style.display='none';}
   buildGridUI(); buildWave(); startIdleWave();
   setLang(lang);
   toast('🐦 Welcome to Lark!');
-});
+};
+var _sb=document.getElementById('startBtn'); if(_sb){_sb.addEventListener('click',window.beginApp); _sb.addEventListener('touchend',function(e){e.preventDefault();window.beginApp();},{passive:false});}
 document.addEventListener('visibilitychange', function() {
   if (document.visibilityState==='visible' && AC && AC.state==='suspended') AC.resume();
 });
