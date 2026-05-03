@@ -14,12 +14,12 @@ html{font-size:16px}
 body{font-family:'Nunito',sans-serif;background:#f0ebe0;color:#2d2417;min-height:100vh;overflow-x:hidden;touch-action:manipulation}
 
 /* ═══ UNLOCK SCREEN ═══ */
-#ul{position:fixed;inset:0;z-index:9999;background:linear-gradient(160deg,#fff8f0,#ffeedd);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:32px;text-align:center}
+#ul{position:fixed;inset:0;z-index:9999;background:linear-gradient(160deg,#fff8f0,#ffeedd);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:32px;text-align:center;pointer-events:auto}
 .ul-bird{font-size:5rem;animation:birdBob 1.2s ease-in-out infinite alternate}
 @keyframes birdBob{from{transform:translateY(0) rotate(-5deg)}to{transform:translateY(-14px) rotate(5deg)}}
 .ul-name{font-size:clamp(2.4rem,9vw,3.6rem);font-weight:900;color:#e8604c;letter-spacing:-1px}
 .ul-tag{font-size:1rem;font-weight:700;color:#b08060;letter-spacing:.5px}
-.ul-btn{background:linear-gradient(135deg,#e8604c,#f0a030);border:none;border-radius:100px;padding:20px 52px;font-family:‘Nunito’,sans-serif;font-size:1.2rem;font-weight:900;color:#fff;cursor:pointer;-webkit-appearance:none;box-shadow:0 8px 24px rgba(232,96,76,.35);animation:ulPulse 2s ease-in-out infinite}
+.ul-btn{position:relative;z-index:10001;background:linear-gradient(135deg,#e8604c,#f0a030);border:none;border-radius:100px;padding:20px 52px;font-family:‘Nunito’,sans-serif;font-size:1.2rem;font-weight:900;color:#fff;cursor:pointer;-webkit-appearance:none;box-shadow:0 8px 24px rgba(232,96,76,.35);animation:ulPulse 2s ease-in-out infinite;pointer-events:auto}
 @keyframes ulPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.04)}}
 
 /* ═══ LAYOUT ═══ */
@@ -566,6 +566,11 @@ function setLang(l) {
 /* ═══════════════════════════════════════
    UNLOCK
 ═══════════════════════════════════════ */
+var startBtn=document.getElementById('startBtn');
+if(startBtn){startBtn.onclick=function(){console.log('CTA clicked');};}
+setTimeout(function(){var ul=document.getElementById('ul');if(ul){console.log('unlock overlay active',getComputedStyle(ul).display,getComputedStyle(ul).pointerEvents,getComputedStyle(ul).zIndex);}},300);
+if(location.search.indexOf('debug=1')>-1){document.body.classList.add('debug-outline');}
+
 document.getElementById('startBtn').addEventListener('click', function() {
   var Ctx = window.AudioContext || window.webkitAudioContext;
   if (!Ctx) { alert('Web Audio not supported — please use Safari or Chrome.'); return; }
