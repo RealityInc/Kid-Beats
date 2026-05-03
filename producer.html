@@ -420,12 +420,14 @@ var NOTE_STAFF={C:0,D:1,E:2,G:4,A:5,B:6};
 
 /* PROJECT + TIMELINE */
 var projectState={bpm:120,key:'C Major',tracks:[
+  {id:'voice',type:'Voice',name:'Voice',clips:[],volume:0.8,pan:0,mute:false,solo:false,effects:{}},
+  {id:'vocal_chops',type:'Vocal Chops',name:'Vocal Chops',clips:[],volume:0.8,pan:0,mute:false,solo:false,effects:{}},
   {id:'drums',type:'Drums',name:'Drums',clips:[],volume:0.8,pan:0,mute:false,solo:false,effects:{}},
   {id:'bass',type:'Bass',name:'Bass',clips:[],volume:0.8,pan:0,mute:false,solo:false,effects:{}},
-  {id:'melody',type:'Melody',name:'Melody',clips:[],volume:0.8,pan:0,mute:false,solo:false,effects:{}},
-  {id:'voice',type:'Voice',name:'Voice',clips:[],volume:0.8,pan:0,mute:false,solo:false,effects:{}},
+  {id:'chords',type:'Chords',name:'Chords',clips:[],volume:0.8,pan:0,mute:false,solo:false,effects:{}},
+  {id:'lead',type:'Lead',name:'Lead',clips:[],volume:0.8,pan:0,mute:false,solo:false,effects:{}},
   {id:'fx',type:'FX',name:'FX',clips:[],volume:0.8,pan:0,mute:false,solo:false,effects:{}},
-  {id:'ai',type:'AI',name:'AI',clips:[],volume:0.8,pan:0,mute:false,solo:false,effects:{}}
+  {id:'extra',type:'Extra',name:'Extra',clips:[],volume:0.8,pan:0,mute:false,solo:false,effects:{}}
 ],notes:[],lyrics:[],aiHistory:[]};
 var loopLibrary=[
   {cat:'Drums',icon:'🥁',name:'Stomp Kit',len:4,bpm:120,key:'-'},{cat:'Bass',icon:'🟣',name:'Bouncy Bass',len:4,bpm:120,key:'C'},
@@ -436,6 +438,18 @@ var loopLibrary=[
   {cat:'Jungle',icon:'🌴',name:'Jungle Run',len:4,bpm:126,key:'F'}
 ];
 var selectedLoop=null,selectedClipId=null,timelineZoom=1,snapOn=true,clipSeq=1;
+
+/* SONG BUILDER ENGINES */
+var SongLengthManager={bars:8,setBars:function(b){this.bars=b;},songSteps:function(){return this.bars*8;},songSeconds:function(){return (60/bpm)*4*this.bars;}};
+var TransportEngine={loopVocal:false,voiceLastSong:-1,voiceLastBar:-1};
+var DrumStyleEngine={style:'Bouncy',styles:{'Soft':{hatEvery:4,snareOffset:4,swing:0.04},'Bouncy':{hatEvery:2,snareOffset:4,swing:0.07},'Stompy':{hatEvery:2,snareOffset:4,kickExtra:true,swing:0.02},'Glitchy':{hatEvery:1,snareOffset:6,glitch:true,swing:0.11},'Hip-Hop':{hatEvery:2,snareOffset:4,swing:0.14},'Dancey':{hatEvery:1,snareOffset:4,swing:0.02}}};
+var MoodEngine={mood:'Happy',map:{Happy:{tempo:[112,132]},Sad:{tempo:[82,104]},Spooky:{tempo:[88,110]},Silly:{tempo:[96,126]},Chill:{tempo:[78,98]},Epic:{tempo:[118,146]}}};
+var GenreEngine={genre:'Pop',map:{'Pop':{swing:0.03},'Hip-Hop':{swing:0.14},'Country':{swing:0.06},'Dance':{swing:0.01},'Punky':{swing:0.02},'Weird Electro':{swing:0.12},'Space Lullaby':{swing:0.08}}};
+var LoopLibrary={save:function(lp){loopLibrary.unshift(lp);renderLoopLibrary();}};
+var MixerEngine={masterComp:true,reverbSend:0.2,delaySend:0.16};
+var SampleManager={kit:'standard',pickKit:function(){this.kit=GenreEngine.genre+'-'+DrumStyleEngine.style;}};
+var ArrangementGrid={add:function(lp,track,start){addLoopToTrack(lp,track,start);}};
+
 
 
 var _revCache={};
@@ -691,7 +705,9 @@ document.getElementById('playBtn').addEventListener('click',function(){if(!AC){t
 function startPlayback(){
   if(playing)return;playing=true;seqStep=0;document.getElementById('playBtn').textContent='⏸';
   nova('🎛️ Playing… <b>REC</b> to capture to piano roll.');
-  var pat=window._novaPat||SEQ_PAT;
+  var basePat=window._novaPat||SEQ_PAT;
+  var cfg=DrumStyleEngine.styles[DrumStyleEngine.style]||DrumStyleEngine.styles.Bouncy;
+  var pat=basePat.map(function(_,i){if(i%8===cfg.snareOffset) return 'snare'; if(i%cfg.hatEvery===1) return 'hihat'; if(i%4===0|| (cfg.kickExtra&&i%8===6)) return 'kick'; return (cfg.glitch&&i%8===7)?'zap':'clap';});
   var mel=window._novaMel||(melody.length?melody.map(function(n){return NF[n]||NF.C;}):null);
   var ms=(60/bpm/2)*1000;
   seqTimer=setInterval(function(){
@@ -700,7 +716,9 @@ function startPlayback(){
     var melStep=Math.floor(seqStep/2);
     if(mel&&seqStep%2===0){playMelNote(mel[melStep%mel.length],0,(60/bpm)*0.85);}
     if(melody.length&&seqStep%2===0){currentNoteIdx=melStep%melody.length;renderSheet(currentNoteIdx);}
-    if(voiceBuf&&seqStep%(pat.length*2)===0)playVoice(0);
+    var songStep=seqStep%SongLengthManager.songSteps(); var barIdx=Math.floor(songStep/8);
+    if(voiceBuf&&songStep===0){playVoice(0);TransportEngine.voiceLastSong=Math.floor(seqStep/SongLengthManager.songSteps());TransportEngine.voiceLastBar=0;}
+    else if(voiceBuf&&TransportEngine.loopVocal&&songStep%8===0&&barIdx>0){playVoice(0);TransportEngine.voiceLastBar=barIdx;}
     boomWave();seqStep++;
   },ms);
 }
@@ -735,8 +753,23 @@ var ask=document.getElementById('askNovaPanel');document.getElementById('novaDoc
 // multi project save/load
 function projectList(){try{return JSON.parse(localStorage.getItem('bb_projects')||'[]')}catch(e){return []}}
 function saveProjectNamed(){var name=prompt('Project name?','My Beat '+new Date().toISOString().slice(11,16));if(!name)return;var arr=projectList();arr.unshift({id:Date.now(),name,bpm,thumb:'🎛️',data:{melody,bpm,activeFX,voiceFX,diffLevel,volumes,muted,projectState}});localStorage.setItem('bb_projects',JSON.stringify(arr.slice(0,20)));toast('Saved '+name);}
+function saveCurrentLoop(){var lp={cat:'Voice',icon:'🎤',name:'My Loop '+new Date().toISOString().slice(11,16),len:SongLengthManager.bars,bpm:bpm,key:projectState.key||'-'};LoopLibrary.save(lp);toast('Loop saved to library');}
 function loadProjectPick(){var arr=projectList();if(!arr.length){toast('No projects yet');return;}var list=arr.map((p,i)=>`${i+1}. ${p.thumb} ${p.name}`).join('\\n');var pick=parseInt(prompt('Load which project?\\n'+list,'1'),10)-1;if(isNaN(pick)||!arr[pick])return;var s=arr[pick].data;melody=s.melody||[];bpm=s.bpm||120;activeFX=s.activeFX||'normal';voiceFX=s.voiceFX||'normal';diffLevel=s.diffLevel||'beginner';volumes=s.volumes||volumes;muted=s.muted||muted;projectState=s.projectState||projectState;document.getElementById('bpml').textContent=bpm+' BPM';renderSeq();renderSheet(-1);renderTimeline();toast('Loaded '+arr[pick].name);}
 document.getElementById('bpmd').insertAdjacentHTML('beforebegin','<button class="bbtn" id="saveMini">💾</button>');document.getElementById('bpmu').insertAdjacentHTML('afterend','<button class="bbtn" id="loadMini">📂</button>');document.getElementById('saveMini').addEventListener('click',saveProjectNamed);document.getElementById('loadMini').addEventListener('click',loadProjectPick);
+
+(function initSongBuilderControls(){
+  var p=document.querySelector('.transport'); if(!p) return;
+  var wrap=document.createElement('div'); wrap.style.display='flex'; wrap.style.gap='6px'; wrap.style.flexWrap='wrap'; wrap.style.margin='8px 0';
+  wrap.innerHTML='<select id="songLenSel"><option>8 bars</option><option>16 bars</option><option>4 bars</option><option>32 bars</option></select><label style="font-size:.65rem"><input type="checkbox" id="loopVocalTg"> Loop vocal</label><select id="moodSel"><option>Happy</option><option>Sad</option><option>Spooky</option><option>Silly</option><option>Chill</option><option>Epic</option></select><select id="genreSel"><option>Pop</option><option>Hip-Hop</option><option>Country</option><option>Dance</option><option>Punky</option><option>Weird Electro</option><option>Space Lullaby</option></select><select id="drumSel"><option>Soft</option><option selected>Bouncy</option><option>Stompy</option><option>Glitchy</option><option>Hip-Hop</option><option>Dancey</option></select><button class="savebtn" id="saveLoopBtn">Save Loop</button>';
+  p.parentNode.insertBefore(wrap,p);
+  document.getElementById('songLenSel').addEventListener('change',function(){SongLengthManager.setBars(parseInt(this.value,10));toast('Song length: '+SongLengthManager.bars+' bars');});
+  document.getElementById('loopVocalTg').addEventListener('change',function(){TransportEngine.loopVocal=this.checked;});
+  document.getElementById('moodSel').addEventListener('change',function(){MoodEngine.mood=this.value;var r=MoodEngine.map[this.value].tempo;bpm=Math.round((r[0]+r[1])/2);document.getElementById('bpml').textContent=bpm+' BPM';toast('Mood: '+this.value);});
+  document.getElementById('genreSel').addEventListener('change',function(){GenreEngine.genre=this.value;SampleManager.pickKit();toast('Genre: '+this.value);});
+  document.getElementById('drumSel').addEventListener('change',function(){DrumStyleEngine.style=this.value;SampleManager.pickKit();toast('Drum style: '+this.value);});
+  document.getElementById('saveLoopBtn').addEventListener('click',saveCurrentLoop);
+})();
+
 
 </script>
 </body>
