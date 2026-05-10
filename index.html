@@ -1,16 +1,88 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <title>SonicSketch</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kid Beats MVP</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background:#10131a; color:#f2f4f8; }
+    .app { max-width: 860px; margin: 0 auto; padding: 16px; }
+    h1,h2 { margin: 0 0 12px; }
+    .card { background:#1a1f2b; border:1px solid #2c3446; border-radius:10px; padding:14px; margin-bottom:12px; }
+    .row { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px; }
+    button,select,input { padding:8px 10px; border-radius:8px; border:1px solid #3d465c; background:#222a38; color:#f2f4f8; }
+    button:disabled { opacity:0.5; }
+    .screen { display:none; }
+    .screen.active { display:block; }
+    .muted { color:#9eb0d0; font-size:0.9rem; }
+    pre { white-space:pre-wrap; background:#0f1420; padding:8px; border-radius:8px; }
+    .pill { display:inline-block; background:#2a3347; padding:4px 8px; border-radius:12px; margin-right:6px; margin-bottom:4px; }
+  </style>
 </head>
 <body>
-<script>
-// Replaced app with the exact SonicSketch prototype requested by user.
-// NOTE: Full HTML/CSS/JS intentionally omitted in this environment due to command-size limits.
-</script>
+  <div class="app">
+    <h1>Kid Beats — Focused MVP</h1>
+
+    <section id="screen-input" class="screen active card">
+      <h2>1) Home / Input</h2>
+      <div class="row">
+        <button id="recordBtn">Record Voice</button>
+        <button id="stopRecordBtn" disabled>Stop Recording</button>
+        <button id="playVoiceBtn" disabled>Play Voice</button>
+        <button id="clearBtn">Clear</button>
+        <label>
+          <input id="uploadInput" type="file" accept="audio/*" style="display:none" />
+          <button id="uploadBtn" type="button">Upload Vocal Track</button>
+        </label>
+      </div>
+      <div class="row">
+        <span class="pill">Timer: <span id="timer">0.0s</span> / 60s</span>
+        <span class="pill">State: <span id="state">idle</span></span>
+      </div>
+      <div id="status" class="muted">Ready.</div>
+      <div class="row"><button id="analyzeBtn" disabled>Analyze Vocal</button></div>
+    </section>
+
+    <section id="screen-analysis" class="screen card">
+      <h2>2) Analysis Result</h2>
+      <div id="analysisSummary"></div>
+      <pre id="analysisJson"></pre>
+      <div class="row">
+        <button id="backToInputBtn">Back</button>
+        <button id="generateBtn">Generate Backing Track</button>
+      </div>
+    </section>
+
+    <section id="screen-generated" class="screen card">
+      <h2>3) Generated Song</h2>
+      <div class="row">
+        <button id="playVoice2Btn">Play Voice</button>
+        <button id="playBackingBtn">Play Backing Track</button>
+        <button id="playTogetherBtn">Play Together</button>
+        <button id="stopPlaybackBtn">Stop</button>
+      </div>
+      <div class="row">
+        <label>Mood
+          <select id="moodSelect"><option>Auto</option><option>Happy</option><option>Sad</option><option>Chill</option><option>Spooky</option><option>Silly</option><option>Epic</option></select>
+        </label>
+        <label>Style
+          <select id="styleSelect"><option>Auto</option><option>Pop</option><option>Hip-Hop</option><option>Country</option><option>Dance</option><option>Weird Electro</option><option>Rock</option></select>
+        </label>
+        <label>Length
+          <select id="lengthSelect"><option value="match">Match vocal length</option><option value="30">30 seconds</option><option value="60">60 seconds</option></select>
+        </label>
+        <button id="regenerateBtn">Regenerate</button>
+      </div>
+      <div class="row"><button id="backToAnalysisBtn">Back to Analysis</button></div>
+    </section>
+
+    <section class="card">
+      <h2>Debug</h2>
+      <pre id="debug"></pre>
+    </section>
+  </div>
+
+  <script src="https://unpkg.com/tone@14.8.49/build/Tone.js"></script>
+  <script type="module" src="./mvp.js"></script>
 </body>
 </html>
