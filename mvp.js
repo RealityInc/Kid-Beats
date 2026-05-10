@@ -42,15 +42,12 @@ class VocalAnalysisEngine {
     const buffer = await ctx.decodeAudioData(arr.slice(0));
     const data = buffer.getChannelData(0);
     const analyzed = analyzeSignal(data, buffer.sampleRate);
-    const phraseSize = 4;
-    const phrases = [];
-    for (let t = 0; t < analyzed.durationSec; t += phraseSize) phrases.push({ start: t, end: Math.min(analyzed.durationSec, t + phraseSize), energy: 0.6 });
     await ctx.close();
-    return { ...analyzed, phrases, styleSuggestion: analyzed.scale === 'minor' ? 'hip-hop' : 'pop' };
+    return { ...analyzed, styleSuggestion: analyzed.scale === 'minor' ? 'hip-hop' : 'pop' };
   }
 }
 
-class MoodPresetEngine { resolve(input, detected) { return input === 'Auto' ? detected : input.toLowerCase(); } }
+class MoodPresetEngine { resolve(input, detected) { return input === 'Auto' ? (detected?.label || 'chill') : input.toLowerCase(); } }
 class StylePresetEngine { resolve(input, detected) { return input === 'Auto' ? detected : input.toLowerCase(); } }
 
 class BackingTrackGenerator {
@@ -197,7 +194,8 @@ analyzeBtn.onclick = async () => {
   <p><b>Scale fit:</b> ${analysis.scaleFit.fitCount}/${analysis.scaleFit.totalNotes} notes in selected scale.</p>
   <p><b>Rhythm inferred from:</b> ${analysis.rhythm.inferredFrom.join(' + ') || 'not enough signal'}</p>
   <p><b>Pitch contour points:</b> ${analysis.pitchContour.length}</p>
-  <p><b>Detected notes:</b> ${analysis.notes.slice(0,24).map(n=>`${n.pitch}@${n.time.toFixed(2)}s`).join(', ')}</p>`;
+  <p><b>Detected notes:</b> ${analysis.notes.slice(0,24).map(n=>`${n.pitch}/m${n.midi}/${n.freq}Hz/c${n.confidence}`).join(', ')}</p>
+  <p><b>Scale candidates:</b> ${analysis.scaleCandidates.map(s=>`${s.scale} (${s.confidence})`).join(', ')}</p>`;
   ev.style.display = evidenceToggle.checked ? 'block' : 'none';
   showScreen('screen-analysis');
 };
