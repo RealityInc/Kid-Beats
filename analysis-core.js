@@ -24,7 +24,7 @@ export function analyzeSignal(data, sampleRate){
     }
   }
   for(let i=1;i<onsets.length;i++) ioi.push(onsets[i]-onsets[i-1]);
-  const ioiForBpm = ioi.filter(v => v >= 0.15);
+  const ioiForBpm = ioi.filter(v => v >= 0.25);
   const bpmSpace = Array.from({length:111}, (_,i)=>60+i);
   const bpmCandidates = bpmSpace.map((bpm)=>{ if(!ioiForBpm.length) return {bpm,confidence:0}; const beat=60/bpm;
     const err = ioiForBpm.reduce((a,v)=>a+Math.min(Math.abs(v-beat),Math.abs(v-beat*2),Math.abs(v-beat/2)),0)/ioiForBpm.length;
