@@ -14,9 +14,9 @@ export function analyzeSignal(data, sampleRate){
   let lastE=0;
   for(let i=0;i+win<data.length;i+=hop){
     const frame = data.subarray(i, i+win); const e = frameRms(frame); energies.push(e); const t=i/sampleRate;
-    const flux = Math.max(0, e-lastE); if(e>0.01 && flux>0.008) onsets.push(t); lastE=e;
+    const flux = Math.max(0, e-lastE); if(e>0.01 && flux>0.025) onsets.push(t); lastE=e;
     const p=autocorrPitch(frame,sampleRate);
-    if(p && p.freq>=80 && p.freq<=1000){
+    if(p && p.freq>=80 && p.freq<=400 && p.confidence>=0.4){
       const midi=freqToMidi(p.freq); const pitch=midiToNote(midi); const expectedMidi=freqToMidi(midiToFreq(midi));
       if(expectedMidi!==midi) console.error('MIDI-note-frequency mismatch', {midi,pitch,freq:p.freq});
       notes.push({time:t,duration:hop/sampleRate,freq:Number(p.freq.toFixed(2)),midi,pitch,confidence:Number(p.confidence.toFixed(2))});
@@ -39,7 +39,9 @@ export function analyzeSignal(data, sampleRate){
   keyCandidates.sort((a,b)=>b.confidence-a.confidence); scaleCandidates.sort((a,b)=>b.confidence-a.confidence);
   const top=keyCandidates[0]||{key:'uncertain',scale:'uncertain',confidence:0,fitCount:0};
   const pitchRange = notes.length ? {lowest:midiToNote(Math.min(...notes.map(n=>n.midi))),highest:midiToNote(Math.max(...notes.map(n=>n.midi)))} : {lowest:'uncertain',highest:'uncertain'};
-  const rhythmConfidence = Number(Math.min(1, (onsets.length/Math.max(1,durationSec*2)) * (bpmCandidates[0]?.confidence || 0)).toFixed(3));
+  const expectedBeats = (typeof bpm === 'number') ? (durationSec * bpm / 60) : durationSec * 2;
+  const onsetAccuracy = Math.max(0, 1 - Math.abs(onsets.length - expectedBeats) / Math.max(1, expectedBeats));
+  const rhythmConfidence = Number((onsetAccuracy * (bpmCandidates[0]?.confidence || 0)).toFixed(3));
   const phraseLen=4; const phrases=[];
   for(let s=0;s<durationSec;s+=phraseLen){ const st=Math.floor(s*sampleRate),en=Math.min(data.length,Math.floor((s+phraseLen)*sampleRate)); const seg=data.subarray(st,en); phrases.push({start:Number(s.toFixed(2)),end:Number(Math.min(durationSec,s+phraseLen).toFixed(2)),energy:Number(frameRms(seg).toFixed(3))}); }
   const avgEnergy = energies.length?energies.reduce((a,v)=>a+v,0)/energies.length:0;
