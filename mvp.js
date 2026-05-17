@@ -96,7 +96,7 @@ class BackingTrackGenerator {
     [hat, bass, poly, lead].forEach((i) => i.connect(bus));
     drum.connect(limiter);
 
-    const rootMap = { C: 'C2', D: 'D2', E: 'E2', F: 'F2', G: 'G2', A: 'A2', B: 'B2' };
+    const rootMap = { C:'C2','C#':'C#2',D:'D2','D#':'D#2',E:'E2',F:'F2','F#':'F#2',G:'G2','G#':'G#2',A:'A2','A#':'A#2',B:'B2' };
     const root = rootMap[analysis.key] || 'C2';
     const prog = analysis.scale === 'minor' ? [[0,3,7],[5,8,12],[7,10,14],[3,7,10]] : [[0,4,7],[5,9,12],[7,11,14],[0,5,9]];
 
