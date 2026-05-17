@@ -24,11 +24,11 @@ export function analyzeSignal(data, sampleRate){
     }
   }
   for(let i=1;i<onsets.length;i++) ioi.push(onsets[i]-onsets[i-1]);
-  const ioiForBpm = ioi.filter(v => v >= 0.25);
+  const ioiForBpm = ioi.filter(v => v >= 0.3);
   const bpmSpace = Array.from({length:111}, (_,i)=>60+i);
   const bpmCandidates = bpmSpace.map((bpm)=>{ if(!ioiForBpm.length) return {bpm,confidence:0}; const beat=60/bpm;
     const err = ioiForBpm.reduce((a,v)=>a+Math.min(Math.abs(v-beat),Math.abs(v-beat*2),Math.abs(v-beat/2)),0)/ioiForBpm.length;
-    return {bpm,confidence:Number(Math.max(0,1-err*2.5).toFixed(3))}; }).sort((a,b)=>b.confidence-a.confidence).slice(0,3);
+    return {bpm,confidence:Number(Math.max(0,1-err*2.5).toFixed(3))}; }).sort((a,b)=>b.confidence-a.confidence||a.bpm-b.bpm).slice(0,3);
   const bpm = bpmCandidates[0]?.confidence>0.25 ? bpmCandidates[0].bpm : 'uncertain';
   const keyProfiles={major:[0,2,4,5,7,9,11],minor:[0,2,3,5,7,8,10]};
   const keyCandidates=[]; const scaleCandidates=[];
