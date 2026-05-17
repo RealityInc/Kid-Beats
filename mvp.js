@@ -166,7 +166,7 @@ let recordTimer = null, recordStart = 0, chunks = [], vocalBlob = null, vocalUrl
 
 function showScreen(id) { document.querySelectorAll('.screen').forEach((s)=>s.classList.remove('active')); document.getElementById(id).classList.add('active'); }
 function setStatus(t) { statusEl.textContent = t; }
-function setVocal(blob) { vocalBlob = blob; if (!vocalUrl) vocalUrl = URL.createObjectURL(blob); player.setVoiceUrl(vocalUrl); debug.blobSize = blob.size; debug.audioUrl = vocalUrl; setDebug(); document.getElementById('playVoiceBtn').disabled = false; document.getElementById('analyzeBtn').disabled = false; }
+function setVocal(blob) { vocalBlob = blob; if (vocalUrl) URL.revokeObjectURL(vocalUrl); vocalUrl = URL.createObjectURL(blob); player.setVoiceUrl(vocalUrl); debug.blobSize = blob.size; debug.audioUrl = vocalUrl; setDebug(); document.getElementById('playVoiceBtn').disabled = false; document.getElementById('analyzeBtn').disabled = false; }
 
 recordBtn.onclick = async () => {
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { setStatus('Microphone recording unavailable on this browser. Please upload audio.'); return; }
@@ -197,8 +197,16 @@ clearBtn.onclick = () => { player.stop(); chunks=[]; vocalBlob=null; vocalUrl=nu
 analyzeBtn.onclick = async () => {
   if (!vocalBlob) return;
   stateMachine.set('analyzing');
+  setStatus('Analyzing...');
   debug.analysis = 'started'; setDebug();
-  analysis = await analyzer.analyze(vocalBlob);
+  try {
+    analysis = await analyzer.analyze(vocalBlob);
+  } catch (err) {
+    debug.analysis = 'error: ' + err.message; setDebug();
+    stateMachine.set('recorded');
+    setStatus('Analysis failed: ' + err.message);
+    return;
+  }
   debug.analysis = 'completed'; debug.decode = 'success'; setDebug();
   stateMachine.set('analyzed');
   document.getElementById('analysisJson').textContent = JSON.stringify(analysis, null, 2);
@@ -215,12 +223,18 @@ async function regenerate() {
   stateMachine.set('generating');
   const mood = moodEngine.resolve(moodSelect.value, analysis.mood);
   const style = styleEngine.resolve(styleSelect.value, analysis.styleSuggestion);
-  const res = await generator.generate(analysis, { mood, style, length: lengthSelect.value });
-  debug.backing = `generated (${res.bars} bars, ${res.totalSec.toFixed(1)}s)`;
-  debug.context = Tone.context.state;
-  setDebug();
-  stateMachine.set('generated');
-  showScreen('screen-generated');
+  try {
+    const res = await generator.generate(analysis, { mood, style, length: lengthSelect.value });
+    debug.backing = `generated (${res.bars} bars, ${res.totalSec.toFixed(1)}s)`;
+    debug.context = Tone.context.state;
+    setDebug();
+    stateMachine.set('generated');
+    showScreen('screen-generated');
+  } catch (err) {
+    debug.backing = 'error: ' + err.message; setDebug();
+    stateMachine.set('analyzed');
+    setStatus('Generation failed: ' + err.message);
+  }
 }
 generateBtn.onclick = regenerate;
 regenerateBtn.onclick = regenerate;
