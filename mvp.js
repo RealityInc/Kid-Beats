@@ -146,17 +146,61 @@ class BackingTrackGenerator {
     }
     Tone.Transport.swing = isHipHop ? 0.2 : (is4OnFloor || isRock) ? 0.02 : isCountry ? 0.06 : 0.08;
     Tone.Transport.schedule(() => Tone.Transport.stop(), totalSec);
-    return { bars, totalSec };
+    return { bars, totalSec, effectiveBpm };
   }
 }
 
 class PlaybackEngine {
-  constructor() { this.voice = new Audio(); }
+  constructor() {
+    this.voice = new Audio();
+    this._source = null; this._pitchShift = null; this._rafId = null;
+    this._rateCompensation = 0; this._pitchSchedule = null;
+  }
+  _ensureAudioChain() {
+    if (this._source) return;
+    this._source = Tone.context.createMediaElementSource(this.voice);
+    this._pitchShift = new Tone.PitchShift(0).toDestination();
+    this._source.connect(this._pitchShift.input);
+  }
   setVoiceUrl(url) { this.voice.src = url; }
-  async playVoice() { this.stop(); await this.voice.play(); }
+  setTuning(pitchSchedule, tempoRatio) {
+    this._pitchSchedule = pitchSchedule;
+    this.voice.playbackRate = tempoRatio;
+    this._rateCompensation = -12 * Math.log2(tempoRatio);
+  }
+  clearTuning() {
+    this._pitchSchedule = null; this.voice.playbackRate = 1; this._rateCompensation = 0;
+    if (this._pitchShift) this._pitchShift.pitch = 0;
+  }
+  _startPitchTracking() {
+    this._stopPitchTracking();
+    if (!this._pitchSchedule || !this._pitchShift) return;
+    let i = 0;
+    const schedule = this._pitchSchedule;
+    const loop = () => {
+      const t = this.voice.currentTime;
+      while (i < schedule.length - 1 && schedule[i + 1].time <= t) i++;
+      if (schedule.length) this._pitchShift.pitch = schedule[i].shift + this._rateCompensation;
+      if (!this.voice.paused) this._rafId = requestAnimationFrame(loop);
+    };
+    this._rafId = requestAnimationFrame(loop);
+  }
+  _stopPitchTracking() {
+    if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = null; }
+  }
+  async playVoice() {
+    this.stop(); this._ensureAudioChain(); await this.voice.play(); this._startPitchTracking();
+  }
   async playBacking() { await Tone.start(); this.stop(); Tone.Transport.position = 0; Tone.Transport.start(); }
-  async playTogether() { await Tone.start(); this.stop(); this.voice.currentTime = 0; Tone.Transport.position = 0; Tone.Transport.start(); await this.voice.play(); }
-  stop() { this.voice.pause(); this.voice.currentTime = 0; Tone.Transport.stop(); }
+  async playTogether() {
+    await Tone.start(); this.stop(); this._ensureAudioChain();
+    this.voice.currentTime = 0; Tone.Transport.position = 0; Tone.Transport.start();
+    await this.voice.play(); this._startPitchTracking();
+  }
+  stop() {
+    this._stopPitchTracking(); this.voice.pause(); this.voice.currentTime = 0;
+    if (this._pitchShift) this._pitchShift.pitch = 0; Tone.Transport.stop();
+  }
 }
 
 const debugEl = document.getElementById('debug');
@@ -194,7 +238,34 @@ const moodEngine = new MoodPresetEngine();
 const styleEngine = new StylePresetEngine();
 const generator = new BackingTrackGenerator();
 const player = new PlaybackEngine();
-let recordTimer = null, recordStart = 0, chunks = [], vocalBlob = null, vocalUrl = null, analysis = null;
+let recordTimer = null, recordStart = 0, chunks = [], vocalBlob = null, vocalUrl = null, analysis = null, generatedResult = null;
+
+function computePitchSchedule(pitchContour, key, scale) {
+  const scaleIntervals = { major: [0,2,4,5,7,9,11], minor: [0,2,3,5,7,8,10] };
+  const noteIndex = { C:0,'C#':1,D:2,'D#':3,E:4,F:5,'F#':6,G:7,'G#':8,A:9,'A#':10,B:11 };
+  const root = noteIndex[key] ?? 0;
+  const scalePcs = (scaleIntervals[scale] ?? scaleIntervals.major).map(v => (v + root) % 12);
+  const raw = (pitchContour || []).filter(p => p.confidence >= 0.25).map(p => {
+    const pc = ((p.midi % 12) + 12) % 12;
+    let bestPc = scalePcs[0], bestDist = 12;
+    for (const sp of scalePcs) {
+      const d = Math.min(Math.abs(sp - pc), 12 - Math.abs(sp - pc));
+      if (d < bestDist) { bestDist = d; bestPc = sp; }
+    }
+    const delta = ((bestPc - pc + 6) % 12) - 6;
+    return { time: p.time, shift: delta };
+  });
+  return raw.filter((e, i) => i === 0 || e.shift !== raw[i - 1].shift);
+}
+
+function applyTuning() {
+  if (!document.getElementById('tuneSyncToggle').checked || !generatedResult || !analysis) {
+    return player.clearTuning();
+  }
+  const schedule = computePitchSchedule(analysis.pitchContour, analysis.key, analysis.scale);
+  const vocalBpm = typeof analysis.bpm === 'number' ? analysis.bpm : generatedResult.effectiveBpm;
+  player.setTuning(schedule, generatedResult.effectiveBpm / vocalBpm);
+}
 
 function showScreen(id) { document.querySelectorAll('.screen').forEach((s)=>s.classList.remove('active')); document.getElementById(id).classList.add('active'); }
 function setStatus(t) { statusEl.textContent = t; }
@@ -225,8 +296,8 @@ playVoiceBtn.onclick = async () => { stateMachine.set('playingVoice'); await pla
 uploadBtn.onclick = () => uploadInput.click();
 uploadInput.onchange = async (e) => { const f = e.target.files[0]; if (!f) return; setVocal(await upload.getBlob(f)); stateMachine.set('uploaded'); setStatus('Vocal uploaded.'); };
 function resetAll() {
-  player.stop();
-  chunks = []; vocalBlob = null; vocalUrl = null; analysis = null;
+  player.stop(); player.clearTuning();
+  chunks = []; vocalBlob = null; vocalUrl = null; analysis = null; generatedResult = null;
   timerEl.textContent = '0.0s';
   document.getElementById('playVoiceBtn').disabled = true;
   document.getElementById('analyzeBtn').disabled = true;
@@ -237,6 +308,7 @@ function resetAll() {
 clearBtn.onclick = resetAll;
 document.getElementById('startOver2Btn').onclick = resetAll;
 document.getElementById('startOver3Btn').onclick = resetAll;
+document.getElementById('tuneSyncToggle').onchange = applyTuning;
 
 analyzeBtn.onclick = async () => {
   if (!vocalBlob) return;
@@ -277,11 +349,13 @@ async function regenerate() {
   const style = styleEngine.resolve(styleSelect.value, analysis.styleSuggestion);
   try {
     const res = await generator.generate(analysis, { mood, style, length: lengthSelect.value });
+    generatedResult = res;
     debug.backing = `generated (${res.bars} bars, ${res.totalSec.toFixed(1)}s)`;
     debug.context = Tone.context.state;
     setDebug();
     stateMachine.set('generated');
     showScreen('screen-generated');
+    applyTuning();
   } catch (err) {
     debug.backing = 'error: ' + err.message; setDebug();
     stateMachine.set('analyzed');
