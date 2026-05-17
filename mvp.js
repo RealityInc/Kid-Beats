@@ -201,13 +201,21 @@ analyzeBtn.onclick = async () => {
   }
   debug.analysis = 'completed'; debug.decode = 'success'; setDebug();
   stateMachine.set('analyzed');
-  document.getElementById('analysisJson').textContent = JSON.stringify(analysis, null, 2);
-  document.getElementById('analysisSummary').innerHTML = `
+  try {
+    const displayAnalysis = { ...analysis };
+    delete displayAnalysis.pitchContour;
+    delete displayAnalysis.notes;
+    document.getElementById('analysisJson').textContent = JSON.stringify(displayAnalysis, null, 2);
+    document.getElementById('analysisSummary').innerHTML = `
     <div class="pill">BPM: ${analysis.bpm}</div><div class="pill">Key: ${analysis.key}</div>
     <div class="pill">Scale: ${analysis.scale}</div><div class="pill">Pitch: ${analysis.pitchRange.lowest} - ${analysis.pitchRange.highest}</div>
     <div class="pill">Rhythm confidence: ${analysis.rhythm.confidence}</div><div class="pill">Phrases: ${analysis.phrases.length}</div>
     <div class="pill">Mood: ${analysis.mood}</div><div class="pill">Suggested style: ${analysis.styleSuggestion}</div>`;
-  showScreen('screen-analysis');
+    showScreen('screen-analysis');
+  } catch (err) {
+    debug.analysis = 'display error: ' + err.message; setDebug();
+    setStatus('Display error: ' + err.message);
+  }
 };
 
 backToInputBtn.onclick = () => showScreen('screen-input');
