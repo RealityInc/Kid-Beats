@@ -144,8 +144,8 @@ class PlaybackEngine {
   constructor() { this.voice = new Audio(); }
   setVoiceUrl(url) { this.voice.src = url; }
   async playVoice() { this.stop(); await this.voice.play(); }
-  async playBacking() { this.stop(); Tone.Transport.position = 0; Tone.Transport.start(); }
-  async playTogether() { this.stop(); this.voice.currentTime = 0; Tone.Transport.position = 0; Tone.Transport.start(); await this.voice.play(); }
+  async playBacking() { await Tone.start(); this.stop(); Tone.Transport.position = 0; Tone.Transport.start(); }
+  async playTogether() { await Tone.start(); this.stop(); this.voice.currentTime = 0; Tone.Transport.position = 0; Tone.Transport.start(); await this.voice.play(); }
   stop() { this.voice.pause(); this.voice.currentTime = 0; Tone.Transport.stop(); }
 }
 
