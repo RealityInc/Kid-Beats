@@ -81,8 +81,15 @@ class BackingTrackGenerator {
     await Tone.start();
     this._dispose();
     Tone.Transport.stop(); Tone.Transport.cancel();
-    Tone.Transport.bpm.value = analysis.bpm;
-    const secPerBar = (60 / analysis.bpm) * 4;
+    const mood = options.mood;
+    const style = options.style;
+    const isRock = style === 'rock';
+    const isCountry = style === 'country';
+    const moodBpmRange = { spooky:[55,85], sad:[60,80], chill:[65,85], silly:[85,110], happy:[95,120], epic:[125,150] };
+    const [bpmMin, bpmMax] = moodBpmRange[mood] ?? [80, 120];
+    const effectiveBpm = Math.max(bpmMin, Math.min(bpmMax, analysis.bpm));
+    Tone.Transport.bpm.value = effectiveBpm;
+    const secPerBar = (60 / effectiveBpm) * 4;
     let target = options.length === 'match' ? analysis.durationSec : Number(options.length);
     target = Math.max(target, analysis.durationSec);
     const bars = Math.ceil(target / secPerBar);
@@ -92,7 +99,7 @@ class BackingTrackGenerator {
     const hat = new Tone.NoiseSynth({ envelope: { attack: 0.001, decay: 0.05, sustain: 0 } });
     const bass = new Tone.Synth({ oscillator: { type: 'triangle' } });
     const poly = new Tone.PolySynth(Tone.Synth);
-    const lead = new Tone.Synth({ oscillator: { type: options.style.includes('electro') ? 'sawtooth' : 'triangle' } });
+    const lead = new Tone.Synth({ oscillator: { type: (isRock || style.includes('electro')) ? 'sawtooth' : 'triangle' } });
     const reverb = new Tone.Reverb({ decay: 2.5, wet: 0.2 });
     const delay = new Tone.PingPongDelay('8n', 0.15);
     const limiter = new Tone.Limiter(-1).toDestination();
@@ -106,16 +113,14 @@ class BackingTrackGenerator {
     const prog = analysis.scale === 'minor' ? [[0,3,7],[5,8,12],[7,10,14],[3,7,10]] : [[0,4,7],[5,9,12],[7,11,14],[0,5,9]];
     const upOctave = n => n.replace(/(\d+)$/, m => String(parseInt(m) + 1));
 
-    const mood = options.mood;
-    const style = options.style;
     const density = mood === 'epic' ? 1.0 : mood === 'chill' ? 0.5 : 0.7;
     const isHalfTime = mood === 'spooky' || mood === 'sad' || mood === 'chill';
     const is4OnFloor = style === 'dance';
     const isHipHop = style === 'hip-hop';
-    const chordDur = isHipHop ? '4n' : `${secPerBar}s`;
+    const chordDur = isHipHop ? '4n' : isCountry ? '8n' : `${secPerBar}s`;
     const kickBeats = is4OnFloor ? [0, 0.25, 0.5, 0.75] : isHalfTime ? [0] : [0, 0.5];
-    const snareBeats = isHalfTime ? [0.5] : [0.25, 0.75];
-    const hatBeats = mood === 'epic' ? [0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875]
+    const snareBeats = isHalfTime ? [0.5] : isCountry ? [] : [0.25, 0.75];
+    const hatBeats = (mood === 'epic' || isRock) ? [0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875]
                    : isHalfTime ? [0.5]
                    : is4OnFloor ? [0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875]
                    : [0.25, 0.5, 0.75];
@@ -128,6 +133,10 @@ class BackingTrackGenerator {
       hatBeats.forEach(f => Tone.Transport.schedule((time) => hat.triggerAttackRelease('16n', time, 0.18*density), t + secPerBar*f));
       Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord, chordDur, time, 0.35), t);
       if (isHipHop) Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord, '8n', time, 0.25), t + secPerBar*0.375);
+      if (isCountry) {
+        Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord.slice(0, 2), '16n', time, 0.3), t + secPerBar * 0.25);
+        Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord.slice(0, 2), '16n', time, 0.3), t + secPerBar * 0.75);
+      }
       Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[0], '8n', time + secPerBar*0.01, 0.6), t);
       Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[2], '8n', time + secPerBar*0.5, 0.45), t);
       if (isHipHop) Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[0], '16n', time, 0.4), t + secPerBar*0.375);
@@ -135,7 +144,7 @@ class BackingTrackGenerator {
       Tone.Transport.schedule((time) => lead.triggerAttackRelease(upOctave(chord[1]), '8n', time + secPerBar*0.5, 0.25), t);
       if (bar % 2 === 1) Tone.Transport.schedule((time) => lead.triggerAttackRelease(upOctave(chord[2]), '8n', time + secPerBar*0.75, 0.22), t);
     }
-    Tone.Transport.swing = isHipHop ? 0.2 : is4OnFloor ? 0.02 : 0.08;
+    Tone.Transport.swing = isHipHop ? 0.2 : (is4OnFloor || isRock) ? 0.02 : isCountry ? 0.06 : 0.08;
     Tone.Transport.schedule(() => Tone.Transport.stop(), totalSec);
     return { bars, totalSec };
   }
@@ -215,7 +224,19 @@ stopRecordBtn.onclick = () => { clearInterval(recordTimer); rec.stop(); stopReco
 playVoiceBtn.onclick = async () => { stateMachine.set('playingVoice'); await player.playVoice(); debug.playback='voice'; setDebug(); };
 uploadBtn.onclick = () => uploadInput.click();
 uploadInput.onchange = async (e) => { const f = e.target.files[0]; if (!f) return; setVocal(await upload.getBlob(f)); stateMachine.set('uploaded'); setStatus('Vocal uploaded.'); };
-clearBtn.onclick = () => { player.stop(); chunks=[]; vocalBlob=null; vocalUrl=null; analysis=null; timerEl.textContent='0.0s'; document.getElementById('playVoiceBtn').disabled=true; document.getElementById('analyzeBtn').disabled=true; stateMachine.set('idle'); setStatus('Cleared.'); };
+function resetAll() {
+  player.stop();
+  chunks = []; vocalBlob = null; vocalUrl = null; analysis = null;
+  timerEl.textContent = '0.0s';
+  document.getElementById('playVoiceBtn').disabled = true;
+  document.getElementById('analyzeBtn').disabled = true;
+  stateMachine.set('idle');
+  setStatus('Cleared.');
+  showScreen('screen-input');
+}
+clearBtn.onclick = resetAll;
+document.getElementById('startOver2Btn').onclick = resetAll;
+document.getElementById('startOver3Btn').onclick = resetAll;
 
 analyzeBtn.onclick = async () => {
   if (!vocalBlob) return;
