@@ -1,3 +1,5 @@
+import { analyzeSignal } from './analysis-core.js';
+
 const MAX_RECORD_SEC = 60;
 
 class AudioStateMachine {
@@ -34,42 +36,32 @@ class RecordingManager {
 
 class UploadManager { async getBlob(file) { return file; } }
 
+function adaptAnalysis(raw) {
+  const bpm = typeof raw.bpm === 'number' ? raw.bpm : (raw.bpmCandidates?.[0]?.bpm ?? 100);
+  const scale = raw.scale === 'uncertain' ? 'major' : raw.scale;
+  const key = raw.key === 'uncertain' ? 'C' : raw.key;
+  const loudness = raw.mood?.factors?.loudness ?? 0;
+  const minor = scale === 'minor';
+  const fast = bpm > 120;
+  const loud = loudness > 0.05;
+  let mood;
+  if (minor && fast && loud) mood = 'spooky';
+  else if (minor && fast) mood = 'sad';
+  else if (minor) mood = 'chill';
+  else if (fast && loud) mood = 'epic';
+  else if (fast) mood = 'happy';
+  else mood = 'silly';
+  return { ...raw, bpm, key, scale, mood, styleSuggestion: 'pop' };
+}
+
 class VocalAnalysisEngine {
   async analyze(blob) {
     const arr = await blob.arrayBuffer();
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     const buffer = await ctx.decodeAudioData(arr.slice(0));
-    const duration = buffer.duration;
-    const data = buffer.getChannelData(0);
-    const windowSize = 1024;
-    const onsets = [];
-    let lastEnergy = 0;
-    for (let i = 0; i < data.length - windowSize; i += windowSize) {
-      let energy = 0;
-      for (let j = 0; j < windowSize; j++) energy += Math.abs(data[i + j]);
-      energy /= windowSize;
-      if (energy - lastEnergy > 0.08) onsets.push(i / buffer.sampleRate);
-      lastEnergy = energy;
-    }
-    const bpm = Math.max(70, Math.min(170, Math.round((onsets.length / Math.max(duration, 1)) * 30 + 70)));
-    const moods = ['happy', 'sad', 'chill', 'spooky', 'silly', 'epic'];
-    const mood = moods[bpm % moods.length];
-    const keys = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
-    const key = keys[Math.floor((duration * 7) % keys.length)];
-    const scale = bpm % 2 ? 'minor' : 'major';
-    const phraseSize = 4;
-    const phrases = [];
-    for (let s = 0; s < duration; s += phraseSize) phrases.push({ start: s, end: Math.min(duration, s + phraseSize), energy: 0.6 });
+    const raw = analyzeSignal(buffer.getChannelData(0), buffer.sampleRate);
     await ctx.close();
-    return {
-      durationSec: Number(duration.toFixed(2)), bpm, key, scale,
-      pitchRange: { lowest: 'G3', highest: 'C5' },
-      notes: [{ time: 0, duration: 0.4, pitch: `${key}4`, midi: 60, confidence: 0.8 }],
-      phrases,
-      rhythm: { onsets: onsets.slice(0, 64), confidence: Math.min(0.95, onsets.length ? 0.78 : 0.4) },
-      mood,
-      styleSuggestion: 'pop',
-    };
+    return adaptAnalysis(raw);
   }
 }
 
