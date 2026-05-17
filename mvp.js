@@ -106,23 +106,36 @@ class BackingTrackGenerator {
     const prog = analysis.scale === 'minor' ? [[0,3,7],[5,8,12],[7,10,14],[3,7,10]] : [[0,4,7],[5,9,12],[7,11,14],[0,5,9]];
     const upOctave = n => n.replace(/(\d+)$/, m => String(parseInt(m) + 1));
 
+    const mood = options.mood;
+    const style = options.style;
+    const density = mood === 'epic' ? 1.0 : mood === 'chill' ? 0.5 : 0.7;
+    const isHalfTime = mood === 'spooky' || mood === 'sad' || mood === 'chill';
+    const is4OnFloor = style === 'dance';
+    const isHipHop = style === 'hip-hop';
+    const chordDur = isHipHop ? '4n' : `${secPerBar}s`;
+    const kickBeats = is4OnFloor ? [0, 0.25, 0.5, 0.75] : isHalfTime ? [0] : [0, 0.5];
+    const snareBeats = isHalfTime ? [0.5] : [0.25, 0.75];
+    const hatBeats = mood === 'epic' ? [0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875]
+                   : isHalfTime ? [0.5]
+                   : is4OnFloor ? [0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875]
+                   : [0.25, 0.5, 0.75];
+
     for (let bar = 0; bar < bars; bar++) {
       const t = bar * secPerBar;
-      const density = options.mood === 'epic' ? 1 : 0.7;
       const chord = prog[bar % prog.length].map((n) => Tone.Frequency(root).transpose(n).toNote());
-      Tone.Transport.schedule((time) => drum.triggerAttackRelease('C1', '8n', time, 0.8), t);
-      Tone.Transport.schedule((time) => drum.triggerAttackRelease('C1', '8n', time + secPerBar * 0.5, 0.7), t);
-      Tone.Transport.schedule((time) => snare.triggerAttackRelease('8n', time + secPerBar*0.25, 0.4*density), t);
-      Tone.Transport.schedule((time) => snare.triggerAttackRelease('8n', time + secPerBar*0.75, 0.4*density), t);
-      [0.25,0.5,0.75].forEach((f) => Tone.Transport.schedule((time)=>hat.triggerAttackRelease('16n', time, 0.2*density), t+secPerBar*f));
-      Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord, `${secPerBar}s`, time, 0.35), t);
+      kickBeats.forEach(f => Tone.Transport.schedule((time) => drum.triggerAttackRelease('C1', '8n', time, 0.8), t + secPerBar*f));
+      snareBeats.forEach(f => Tone.Transport.schedule((time) => snare.triggerAttackRelease('8n', time, 0.4*density), t + secPerBar*f));
+      hatBeats.forEach(f => Tone.Transport.schedule((time) => hat.triggerAttackRelease('16n', time, 0.18*density), t + secPerBar*f));
+      Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord, chordDur, time, 0.35), t);
+      if (isHipHop) Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord, '8n', time, 0.25), t + secPerBar*0.375);
       Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[0], '8n', time + secPerBar*0.01, 0.6), t);
       Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[2], '8n', time + secPerBar*0.5, 0.45), t);
+      if (isHipHop) Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[0], '16n', time, 0.4), t + secPerBar*0.375);
       Tone.Transport.schedule((time) => lead.triggerAttackRelease(upOctave(chord[0]), '8n', time + secPerBar*0.25, 0.28), t);
       Tone.Transport.schedule((time) => lead.triggerAttackRelease(upOctave(chord[1]), '8n', time + secPerBar*0.5, 0.25), t);
       if (bar % 2 === 1) Tone.Transport.schedule((time) => lead.triggerAttackRelease(upOctave(chord[2]), '8n', time + secPerBar*0.75, 0.22), t);
     }
-    Tone.Transport.swing = options.style.includes('hip-hop') ? 0.2 : options.style.includes('dance') ? 0.05 : 0.1;
+    Tone.Transport.swing = isHipHop ? 0.2 : is4OnFloor ? 0.02 : 0.08;
     return { bars, totalSec };
   }
 }
