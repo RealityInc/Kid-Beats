@@ -40,8 +40,9 @@ export function analyzeSignal(data, sampleRate){
   keyCandidates.sort((a,b)=>b.confidence-a.confidence); scaleCandidates.sort((a,b)=>b.confidence-a.confidence);
   const top=keyCandidates[0]||{key:'uncertain',scale:'uncertain',confidence:0,fitCount:0};
   const pitchRange = notes.length ? {lowest:midiToNote(Math.min(...notes.map(n=>n.midi))),highest:midiToNote(Math.max(...notes.map(n=>n.midi)))} : {lowest:'uncertain',highest:'uncertain'};
+  const effectiveOnsets = onsets.filter((t, i) => i === 0 || t - onsets[i - 1] >= 0.25);
   const expectedBeats = (typeof bpm === 'number') ? (durationSec * bpm / 60) : durationSec * 2;
-  const onsetAccuracy = Math.max(0, 1 - Math.abs(onsets.length - expectedBeats) / Math.max(1, expectedBeats));
+  const onsetAccuracy = Math.max(0, 1 - Math.abs(effectiveOnsets.length - expectedBeats) / Math.max(1, expectedBeats));
   const rhythmConfidence = Number((onsetAccuracy * (bpmCandidates[0]?.confidence || 0)).toFixed(3));
   const phraseLen=4; const phrases=[];
   for(let s=0;s<durationSec;s+=phraseLen){ const st=Math.floor(s*sampleRate),en=Math.min(data.length,Math.floor((s+phraseLen)*sampleRate)); const seg=data.subarray(st,en); phrases.push({start:Number(s.toFixed(2)),end:Number(Math.min(durationSec,s+phraseLen).toFixed(2)),energy:Number(frameRms(seg).toFixed(3))}); }
