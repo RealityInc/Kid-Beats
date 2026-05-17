@@ -51,7 +51,13 @@ function adaptAnalysis(raw) {
   else if (fast && loud) mood = 'epic';
   else if (fast) mood = 'happy';
   else mood = 'silly';
-  return { ...raw, bpm, key, scale, mood, styleSuggestion: 'pop' };
+  const durationSec = raw.durationSec ?? 0;
+  const phrases = raw.phrases ?? (() => {
+    const result = [];
+    for (let s = 0; s < durationSec; s += 4) result.push({ start: s, end: Math.min(durationSec, s + 4), energy: 0.6 });
+    return result;
+  })();
+  return { ...raw, bpm, key, scale, mood, styleSuggestion: 'pop', phrases };
 }
 
 class VocalAnalysisEngine {
