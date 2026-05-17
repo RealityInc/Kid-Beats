@@ -75,8 +75,11 @@ class MoodPresetEngine { resolve(input, detected) { return input === 'Auto' ? de
 class StylePresetEngine { resolve(input, detected) { return input === 'Auto' ? detected : input.toLowerCase(); } }
 
 class BackingTrackGenerator {
+  constructor() { this._nodes = []; }
+  _dispose() { this._nodes.forEach(n => { try { n.dispose(); } catch(e) {} }); this._nodes = []; }
   async generate(analysis, options) {
     await Tone.start();
+    this._dispose();
     Tone.Transport.stop(); Tone.Transport.cancel();
     Tone.Transport.bpm.value = analysis.bpm;
     const secPerBar = (60 / analysis.bpm) * 4;
@@ -84,32 +87,40 @@ class BackingTrackGenerator {
     target = Math.max(target, analysis.durationSec);
     const bars = Math.ceil(target / secPerBar);
     const totalSec = bars * secPerBar;
-    const drum = new Tone.MembraneSynth().connect(new Tone.Compressor(-20, 4));
+    const drum = new Tone.MembraneSynth();
+    const snare = new Tone.NoiseSynth({ envelope: { attack: 0.001, decay: 0.13, sustain: 0 } });
     const hat = new Tone.NoiseSynth({ envelope: { attack: 0.001, decay: 0.05, sustain: 0 } });
     const bass = new Tone.Synth({ oscillator: { type: 'triangle' } });
     const poly = new Tone.PolySynth(Tone.Synth);
-    const lead = new Tone.Synth({ oscillator: { type: options.style.includes('electro') ? 'sawtooth' : 'square' } });
+    const lead = new Tone.Synth({ oscillator: { type: options.style.includes('electro') ? 'sawtooth' : 'triangle' } });
     const reverb = new Tone.Reverb({ decay: 2.5, wet: 0.2 });
     const delay = new Tone.PingPongDelay('8n', 0.15);
     const limiter = new Tone.Limiter(-1).toDestination();
     const bus = new Tone.Gain(0.9).chain(reverb, delay, limiter);
-    [hat, bass, poly, lead].forEach((i) => i.connect(bus));
+    [hat, snare, bass, poly, lead].forEach((i) => i.connect(bus));
     drum.connect(limiter);
+    this._nodes = [drum, snare, hat, bass, poly, lead, reverb, delay, limiter, bus];
 
     const rootMap = { C:'C2','C#':'C#2',D:'D2','D#':'D#2',E:'E2',F:'F2','F#':'F#2',G:'G2','G#':'G#2',A:'A2','A#':'A#2',B:'B2' };
     const root = rootMap[analysis.key] || 'C2';
     const prog = analysis.scale === 'minor' ? [[0,3,7],[5,8,12],[7,10,14],[3,7,10]] : [[0,4,7],[5,9,12],[7,11,14],[0,5,9]];
+    const upOctave = n => n.replace(/(\d+)$/, m => String(parseInt(m) + 1));
 
     for (let bar = 0; bar < bars; bar++) {
       const t = bar * secPerBar;
       const density = options.mood === 'epic' ? 1 : 0.7;
+      const chord = prog[bar % prog.length].map((n) => Tone.Frequency(root).transpose(n).toNote());
       Tone.Transport.schedule((time) => drum.triggerAttackRelease('C1', '8n', time, 0.8), t);
       Tone.Transport.schedule((time) => drum.triggerAttackRelease('C1', '8n', time + secPerBar * 0.5, 0.7), t);
+      Tone.Transport.schedule((time) => snare.triggerAttackRelease('8n', time + secPerBar*0.25, 0.4*density), t);
+      Tone.Transport.schedule((time) => snare.triggerAttackRelease('8n', time + secPerBar*0.75, 0.4*density), t);
       [0.25,0.5,0.75].forEach((f) => Tone.Transport.schedule((time)=>hat.triggerAttackRelease('16n', time, 0.2*density), t+secPerBar*f));
-      const chord = prog[bar % prog.length].map((n) => Tone.Frequency(root).transpose(n).toNote());
       Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord, `${secPerBar}s`, time, 0.35), t);
       Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[0], '8n', time + secPerBar*0.01, 0.6), t);
-      if (bar % 2 === 1) Tone.Transport.schedule((time)=>lead.triggerAttackRelease(chord[1], '8n', time + secPerBar*0.75, 0.3), t);
+      Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[2], '8n', time + secPerBar*0.5, 0.45), t);
+      Tone.Transport.schedule((time) => lead.triggerAttackRelease(upOctave(chord[0]), '8n', time + secPerBar*0.25, 0.28), t);
+      Tone.Transport.schedule((time) => lead.triggerAttackRelease(upOctave(chord[1]), '8n', time + secPerBar*0.5, 0.25), t);
+      if (bar % 2 === 1) Tone.Transport.schedule((time) => lead.triggerAttackRelease(upOctave(chord[2]), '8n', time + secPerBar*0.75, 0.22), t);
     }
     Tone.Transport.swing = options.style.includes('hip-hop') ? 0.2 : options.style.includes('dance') ? 0.05 : 0.1;
     return { bars, totalSec };
