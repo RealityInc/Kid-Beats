@@ -11,12 +11,12 @@ function autocorrPitch(frame,sr){ let best=0,bLag=0; const minLag=Math.floor(sr/
 export function analyzeSignal(data, sampleRate){
   const durationSec = data.length / sampleRate; const win=2048, hop=512;
   const onsets=[], ioi=[], pitchContour=[], notes=[], energies=[];
-  let lastE=0;
+  let lastE=0, lastOnset=-1;
   for(let i=0;i+win<data.length;i+=hop){
     const frame = data.subarray(i, i+win); const e = frameRms(frame); energies.push(e); const t=i/sampleRate;
-    const flux = Math.max(0, e-lastE); if(e>0.01 && flux>0.025) onsets.push(t); lastE=e;
+    const flux = Math.max(0, e-lastE); if(e>0.01 && flux>0.025 && t-lastOnset>=0.1){ onsets.push(t); lastOnset=t; } lastE=e;
     const p=autocorrPitch(frame,sampleRate);
-    if(p && p.freq>=80 && p.freq<=400 && p.confidence>=0.4){
+    if(p && p.freq>=80 && p.freq<=400 && p.confidence>=0.25){
       const midi=freqToMidi(p.freq); const pitch=midiToNote(midi); const expectedMidi=freqToMidi(midiToFreq(midi));
       if(expectedMidi!==midi) console.error('MIDI-note-frequency mismatch', {midi,pitch,freq:p.freq});
       notes.push({time:t,duration:hop/sampleRate,freq:Number(p.freq.toFixed(2)),midi,pitch,confidence:Number(p.confidence.toFixed(2))});
