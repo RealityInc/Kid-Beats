@@ -136,6 +136,7 @@ class BackingTrackGenerator {
       if (bar % 2 === 1) Tone.Transport.schedule((time) => lead.triggerAttackRelease(upOctave(chord[2]), '8n', time + secPerBar*0.75, 0.22), t);
     }
     Tone.Transport.swing = isHipHop ? 0.2 : is4OnFloor ? 0.02 : 0.08;
+    Tone.Transport.schedule(() => Tone.Transport.stop(), totalSec);
     return { bars, totalSec };
   }
 }
