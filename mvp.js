@@ -85,6 +85,8 @@ class BackingTrackGenerator {
     const style = options.style;
     const isRock = style === 'rock';
     const isCountry = style === 'country';
+    const is4OnFloor = style === 'dance';
+    const isHipHop = style === 'hip-hop';
     const moodBpmRange = { spooky:[55,85], sad:[60,80], chill:[65,85], silly:[85,110], happy:[95,120], epic:[125,150] };
     const [bpmMin, bpmMax] = moodBpmRange[mood] ?? [80, 120];
     const effectiveBpm = Math.max(bpmMin, Math.min(bpmMax, analysis.bpm));
@@ -94,55 +96,94 @@ class BackingTrackGenerator {
     target = Math.max(target, analysis.durationSec);
     const bars = Math.ceil(target / secPerBar);
     const totalSec = bars * secPerBar;
+
     const drum = new Tone.MembraneSynth();
     const snare = new Tone.NoiseSynth({ envelope: { attack: 0.001, decay: 0.13, sustain: 0 } });
     const hat = new Tone.NoiseSynth({ envelope: { attack: 0.001, decay: 0.05, sustain: 0 } });
     const bass = new Tone.Synth({ oscillator: { type: 'triangle' } });
     const poly = new Tone.PolySynth(Tone.Synth);
-    const lead = new Tone.Synth({ oscillator: { type: (isRock || style.includes('electro')) ? 'sawtooth' : 'triangle' } });
+    const melody = new Tone.Synth({ oscillator: { type: 'sine' }, envelope: { attack: 0.02, decay: 0.25, sustain: 0.4, release: 0.4 } });
     const reverb = new Tone.Reverb({ decay: 2.5, wet: 0.2 });
     const delay = new Tone.PingPongDelay('8n', 0.15);
     const limiter = new Tone.Limiter(-1).toDestination();
     const bus = new Tone.Gain(0.9).chain(reverb, delay, limiter);
-    [hat, snare, bass, poly, lead].forEach((i) => i.connect(bus));
+    [hat, snare, bass, poly, melody].forEach((i) => i.connect(bus));
     drum.connect(limiter);
-    this._nodes = [drum, snare, hat, bass, poly, lead, reverb, delay, limiter, bus];
+    this._nodes = [drum, snare, hat, bass, poly, melody, reverb, delay, limiter, bus];
 
     const rootMap = { C:'C2','C#':'C#2',D:'D2','D#':'D#2',E:'E2',F:'F2','F#':'F#2',G:'G2','G#':'G#2',A:'A2','A#':'A#2',B:'B2' };
     const root = rootMap[analysis.key] || 'C2';
     const prog = analysis.scale === 'minor' ? [[0,3,7],[5,8,12],[7,10,14],[3,7,10]] : [[0,4,7],[5,9,12],[7,11,14],[0,5,9]];
-    const upOctave = n => n.replace(/(\d+)$/, m => String(parseInt(m) + 1));
 
-    const density = mood === 'epic' ? 1.0 : mood === 'chill' ? 0.5 : 0.7;
+    // Build melody motif from pitch contour, snapped to detected scale
+    const SI = analysis.scale === 'minor' ? [0,2,3,5,7,8,10] : [0,2,4,5,7,9,11];
+    const NI = { C:0,'C#':1,D:2,'D#':3,E:4,F:5,'F#':6,G:7,'G#':8,A:9,'A#':10,B:11 };
+    const rootPc = NI[analysis.key] ?? 0;
+    const scalePcs = SI.map(v => (v + rootPc) % 12);
+    function snapMidi(midi) {
+      const pc = ((midi % 12) + 12) % 12;
+      let bestPc = scalePcs[0], bestDist = 12;
+      for (const sp of scalePcs) { const d = Math.min(Math.abs(sp-pc), 12-Math.abs(sp-pc)); if (d < bestDist) { bestDist = d; bestPc = sp; } }
+      return midi + ((bestPc - pc + 6) % 12) - 6;
+    }
+    const eighthSec = (60 / effectiveBpm) / 2;
+    const highConf = (analysis.pitchContour || []).filter(p => p.confidence >= 0.35);
+    let melodyMotif;
+    if (highConf.length >= 4) {
+      const seen = new Set();
+      const candidates = highConf.filter(p => p.time < secPerBar * 2).map(p => {
+        const slot = Math.round(p.time / eighthSec);
+        let m = p.midi; while (m < 60) m += 12; while (m > 83) m -= 12;
+        return { slot, note: Tone.Frequency(snapMidi(m), 'midi').toNote() };
+      }).filter(m => { if (seen.has(m.slot)) return false; seen.add(m.slot); return true; });
+      if (candidates.length >= 3) melodyMotif = candidates.map(m => ({ time: m.slot * eighthSec, note: m.note }));
+    }
+    if (!melodyMotif) {
+      // Fallback: mood-specific scale arpeggio
+      const pitches = SI.map(v => Tone.Frequency(rootPc + v + 60, 'midi').toNote());
+      const pats = { spooky:[0,2,1,0,2,4,3,1], sad:[0,1,2,1,0,2,1,0], chill:[0,2,4,2,0,4,2,0], epic:[0,4,6,2,4,6,2,0], happy:[0,2,4,2,4,5,4,2], silly:[0,4,2,5,4,2,5,4] };
+      melodyMotif = (pats[mood] || pats.happy).map((idx, i) => ({ time: i * eighthSec, note: pitches[idx % pitches.length] }));
+    }
+
+    // Drum complexity driven by detected BPM + average phrase energy
+    const phraseEnergies = analysis.phrases.map(p => p.energy);
+    const avgEnergy = phraseEnergies.reduce((a, v) => a + v, 0) / Math.max(1, phraseEnergies.length);
+    const complexity = Math.min(1, Math.max(0, (effectiveBpm - 70) / 80 * 0.6 + Math.min(avgEnergy * 15, 1) * 0.4));
     const isHalfTime = mood === 'spooky' || mood === 'sad' || mood === 'chill';
-    const is4OnFloor = style === 'dance';
-    const isHipHop = style === 'hip-hop';
-    const chordDur = isHipHop ? '4n' : isCountry ? '8n' : `${secPerBar}s`;
-    const kickBeats = is4OnFloor ? [0, 0.25, 0.5, 0.75] : isHalfTime ? [0] : [0, 0.5];
+    const kickBeats = is4OnFloor        ? [0, 0.25, 0.5, 0.75]
+                    : isHalfTime        ? [0, 0.5]
+                    : complexity > 0.7  ? [0, 0.375, 0.5, 0.875]
+                    : complexity > 0.4  ? [0, 0.5]
+                    :                     [0];
     const snareBeats = isHalfTime ? [0.5] : isCountry ? [] : [0.25, 0.75];
-    const hatBeats = (mood === 'epic' || isRock) ? [0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875]
-                   : isHalfTime ? [0.5]
-                   : is4OnFloor ? [0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875]
-                   : [0.25, 0.5, 0.75];
+    const hatDiv = complexity > 0.65 ? 8 : complexity > 0.35 ? 4 : 2;
+    const kickSet = new Set(kickBeats.map(f => Math.round(f * 1000)));
+    const hatBeats = Array.from({ length: hatDiv }, (_, i) => i / hatDiv).filter(f => !kickSet.has(Math.round(f * 1000)));
+    const chordDur = isHipHop ? '4n' : isCountry ? '8n' : `${secPerBar}s`;
 
     for (let bar = 0; bar < bars; bar++) {
       const t = bar * secPerBar;
+      const barE = phraseEnergies[Math.floor(t / 4)] ?? avgEnergy;
+      const dynVel = Math.max(0.25, Math.min(1.0, barE / Math.max(avgEnergy * 1.2, 0.001)));
       const chord = prog[bar % prog.length].map((n) => Tone.Frequency(root).transpose(n).toNote());
-      kickBeats.forEach(f => Tone.Transport.schedule((time) => drum.triggerAttackRelease('C1', '8n', time, 0.8), t + secPerBar*f));
-      snareBeats.forEach(f => Tone.Transport.schedule((time) => snare.triggerAttackRelease('8n', time, 0.4*density), t + secPerBar*f));
-      hatBeats.forEach(f => Tone.Transport.schedule((time) => hat.triggerAttackRelease('16n', time, 0.18*density), t + secPerBar*f));
+
+      kickBeats.forEach(f => Tone.Transport.schedule((time) => drum.triggerAttackRelease('C1', '8n', time, 0.65 + dynVel * 0.3), t + secPerBar * f));
+      snareBeats.forEach(f => Tone.Transport.schedule((time) => snare.triggerAttackRelease('8n', time, 0.25 + dynVel * 0.2), t + secPerBar * f));
+      hatBeats.forEach(f => Tone.Transport.schedule((time) => hat.triggerAttackRelease('16n', time, 0.08 + dynVel * 0.15), t + secPerBar * f));
       Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord, chordDur, time, 0.35), t);
-      if (isHipHop) Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord, '8n', time, 0.25), t + secPerBar*0.375);
+      if (isHipHop) Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord, '8n', time, 0.25), t + secPerBar * 0.375);
       if (isCountry) {
         Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord.slice(0, 2), '16n', time, 0.3), t + secPerBar * 0.25);
         Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord.slice(0, 2), '16n', time, 0.3), t + secPerBar * 0.75);
       }
-      Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[0], '8n', time + secPerBar*0.01, 0.6), t);
-      Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[2], '8n', time + secPerBar*0.5, 0.45), t);
-      if (isHipHop) Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[0], '16n', time, 0.4), t + secPerBar*0.375);
-      Tone.Transport.schedule((time) => lead.triggerAttackRelease(upOctave(chord[0]), '8n', time + secPerBar*0.25, 0.28), t);
-      Tone.Transport.schedule((time) => lead.triggerAttackRelease(upOctave(chord[1]), '8n', time + secPerBar*0.5, 0.25), t);
-      if (bar % 2 === 1) Tone.Transport.schedule((time) => lead.triggerAttackRelease(upOctave(chord[2]), '8n', time + secPerBar*0.75, 0.22), t);
+      Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[0], '8n', time + secPerBar * 0.01, 0.6), t);
+      Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[2], '8n', time + secPerBar * 0.5, 0.45), t);
+      if (isHipHop) Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[0], '16n', time, 0.4), t + secPerBar * 0.375);
+
+      // Melody loops every 2 bars
+      if (bar % 2 === 0) {
+        melodyMotif.forEach(m => Tone.Transport.schedule((time) => melody.triggerAttackRelease(m.note, '8n', time, 0.38), t + m.time));
+      }
     }
     Tone.Transport.swing = isHipHop ? 0.2 : (is4OnFloor || isRock) ? 0.02 : isCountry ? 0.06 : 0.08;
     Tone.Transport.schedule(() => Tone.Transport.stop(), totalSec);
