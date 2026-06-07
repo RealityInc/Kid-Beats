@@ -189,6 +189,7 @@ canvas#pianoRoll{display:block;width:100%;border-radius:10px;background:#060914}
   <div class="voice-card">
     <div class="mic-row">
       <button class="rec-btn" id="recBtn">🎤</button>
+      <button class="rec-btn" id="playVoiceBtn" disabled title="Play recording">▶</button>
       <div>
         <div class="rec-status" id="recStatus">TAP TO RECORD</div>
         <div class="rec-hint" id="recHint">Record your voice — play it back with effects!</div><div class="record-count" id="recordCount"></div>
@@ -381,13 +382,14 @@ function playMelNote(note,off,dur){
 
 /* ── VOICE ── */
 document.getElementById('recBtn').addEventListener('click',function(){if(!AC){toast('Tap START first!');return;}if(isRecording){stopRec();return;}startRec();});
+document.getElementById('playVoiceBtn').addEventListener('click',function(){if(!AC){toast('Tap START first!');return;}playVoice(0);});
 function startRec(){
   navigator.mediaDevices.getUserMedia({audio:true}).then(function(stream){
     mediaRecorder=new MediaRecorder(stream);recChunks=[];
     mediaRecorder.ondataavailable=function(e){if(e.data.size>0)recChunks.push(e.data);};
     mediaRecorder.onstop=function(){
       var blob=new Blob(recChunks,{type:'audio/webm'});
-      blob.arrayBuffer().then(function(ab){AC.decodeAudioData(ab,function(buf){voiceBuf=buf;document.getElementById('recHint').textContent='Voice saved! It will play in your song.';toast('🎤 Voice recorded!');},function(){toast('Could not decode — try again');});});
+      blob.arrayBuffer().then(function(ab){return AC.decodeAudioData(ab);}).then(function(buf){voiceBuf=buf;document.getElementById('playVoiceBtn').disabled=false;document.getElementById('recHint').textContent='Voice saved! Tap ▶ to hear it.';toast('🎤 Voice recorded!');}).catch(function(){toast('Could not decode — try again');});
       stream.getTracks().forEach(function(t){t.stop();});
     };
     mediaRecorder.start();isRecording=true;
@@ -609,7 +611,7 @@ function stopPlayback(){
 }
 document.getElementById('stopBtn').addEventListener('click',stopPlayback);
 document.getElementById('clrAll').addEventListener('click',function(){
-  stopPlayback();melody=[];voiceBuf=null;window._novaPat=null;window._novaMel=null;
+  stopPlayback();melody=[];voiceBuf=null;document.getElementById('playVoiceBtn').disabled=true;window._novaPat=null;window._novaMel=null;
   renderSeq();renderSheet(-1);prEvents=[];
   document.getElementById('recHint').textContent='Record your voice — play it back with effects!';
   nova(lang==='es'?'¡Todo limpio! ¡Vamos de nuevo!':'All clear! Let\'s start fresh!');
