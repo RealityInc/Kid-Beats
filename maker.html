@@ -385,14 +385,21 @@ document.getElementById('recBtn').addEventListener('click',function(){if(!AC){to
 document.getElementById('playVoiceBtn').addEventListener('click',function(){if(!AC){toast('Tap START first!');return;}playVoice(0);});
 function startRec(){
   navigator.mediaDevices.getUserMedia({audio:true}).then(function(stream){
-    mediaRecorder=new MediaRecorder(stream);recChunks=[];
-    mediaRecorder.ondataavailable=function(e){if(e.data.size>0)recChunks.push(e.data);};
+    var mimeType=MediaRecorder.isTypeSupported('audio/webm;codecs=opus')?'audio/webm;codecs=opus':MediaRecorder.isTypeSupported('audio/mp4')?'audio/mp4':'';
+    mediaRecorder=new MediaRecorder(stream,mimeType?{mimeType:mimeType}:{});recChunks=[];
+    mediaRecorder.ondataavailable=function(e){if(e.data&&e.data.size>0)recChunks.push(e.data);};
     mediaRecorder.onstop=function(){
-      var blob=new Blob(recChunks,{type:'audio/webm'});
-      blob.arrayBuffer().then(function(ab){return AC.decodeAudioData(ab);}).then(function(buf){voiceBuf=buf;document.getElementById('playVoiceBtn').disabled=false;document.getElementById('recHint').textContent='Voice saved! Tap ▶ to hear it.';toast('🎤 Voice recorded!');}).catch(function(){toast('Could not decode — try again');});
+      var usedMime=mediaRecorder.mimeType||mimeType||'audio/webm';
+      var blob=new Blob(recChunks,{type:usedMime});
+      if(!blob.size){toast('No audio captured — try again');return;}
+      blob.arrayBuffer().then(function(ab){
+        function onDecode(buf){voiceBuf=buf;document.getElementById('playVoiceBtn').disabled=false;document.getElementById('recHint').textContent='Voice saved! Tap ▶ to hear it.';toast('🎤 Voice recorded!');}
+        function onErr(){toast('Could not decode — try again');}
+        (AC.state==='suspended'?AC.resume():Promise.resolve()).then(function(){AC.decodeAudioData(ab,onDecode,onErr);}).catch(onErr);
+      }).catch(function(){toast('Could not decode — try again');});
       stream.getTracks().forEach(function(t){t.stop();});
     };
-    mediaRecorder.start();isRecording=true;
+    mediaRecorder.start(100);isRecording=true;
     document.getElementById('recBtn').classList.add('recording');document.getElementById('recBtn').textContent='⏹';
     document.getElementById('recStatus').textContent='● RECORDING';document.getElementById('recStatus').classList.add('on');
     document.getElementById('recHint').textContent='Tap again to stop…';
