@@ -556,7 +556,7 @@ function buildSong(){
     method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({
       model:'claude-sonnet-4-20250514',max_tokens:700,
-      system:'You are an AI music producer for kids aged 10-12. Build complete tracks. Reply ONLY with valid JSON, no markdown.\n\nFormat:\n{\n  "name": "Track name",\n  "bpm": 120,\n  "pattern": ["kick","hihat","snare","hihat","kick","clap","snare","hihat","kick","hihat","snare","hihat","kick","hihat","clap","zap"],\n  "melody": ["C","E","G","A","G","E","D","C","E","G","A","B","A","G","E","C"],\n  "lyrics": ["Verse line one,","Verse line two,","Chorus line,","End line!"]\n}\n\nRules:\n- bpm: 90-140\n- pattern: 8 or 16 items, use: kick snare hihat clap bloop zap\n- melody: 8 or 16 items, use: C D E G A B\n- lyrics: 4 lines matching the vibe\n- Make it match the genre/vibe described',
+      system:'You are an AI music producer for kids aged 10-12. Build complete tracks. Reply ONLY with valid JSON, no markdown.\n\nFormat:\n{\n  "name": "Track name",\n  "vibe": "happy",\n  "bpm": 120,\n  "pattern": ["kick","hihat","snare","hihat","kick","clap","snare","hihat","kick","hihat","snare","hihat","kick","hihat","clap","zap"],\n  "melody": ["C","E","G","A","G","E","D","C","E","G","A","B","A","G","E","C"],\n  "lyrics": ["Verse line one,","Verse line two,","Chorus line,","End line!"]\n}\n\nRules:\n- vibe: read the emotional meaning and pick one of: spooky, silly, happy, epic, chill, sad. Use silly for nonsense/weird/random input. Use spooky for scary/dark/ghost themes.\n- bpm: match the vibe (spooky 70-95, silly 95-125, happy 100-130, epic 120-140, chill 80-105, sad 65-90)\n- pattern: 8 or 16 items, use: kick snare hihat clap bloop zap\n- melody: 8 or 16 items, use: C D E G A B\n- lyrics: 4 lines matching the vibe\n- Make it match the genre/vibe described',
       messages:[{role:'user',content:'Build this track: '+prompt+(lang==='es'?' (in Spanish)':'')}]
     })
   })
@@ -573,18 +573,22 @@ function buildSong(){
 }
 
 function loadAndPlaySong(song){
+  var vibe=(song.vibe||'happy').toLowerCase();
+  var VIBES={spooky:{e:'🎃',l:'Spooky',fx:'echo',c:'#b06eff'},silly:{e:'😜',l:'Silly',fx:'alien',c:'#00ffca'},happy:{e:'😄',l:'Happy',fx:'normal',c:'#f9ff3d'},epic:{e:'⚡',l:'Epic',fx:'robot',c:'#ff8c3d'},chill:{e:'😎',l:'Chill',fx:'normal',c:'#00d2ff'},sad:{e:'😢',l:'Sad',fx:'robot',c:'#7b9eff'}};
+  var v=VIBES[vibe]||VIBES.happy;
+  voiceFX=v.fx;document.querySelectorAll('.vfx').forEach(function(c){c.classList.remove('on');if(c.dataset.vf===v.fx)c.classList.add('on');});
   bpm=Math.max(80,Math.min(160,song.bpm||120));
   document.getElementById('bpml').textContent=bpm+' BPM';
   melody=(song.melody||['C','E','G','A']).slice(0,32);
   renderSeq();renderSheet(-1);
-  var html='<b style="color:#ff3dac">🎛️ '+song.name+'</b> · <span style="color:#3a5070">'+bpm+' BPM</span><br>';
+  var html='<b style="color:#ff3dac">🎛️ '+song.name+'</b> <span style="background:'+v.c+'22;border:1px solid '+v.c+'55;color:'+v.c+';border-radius:12px;padding:1px 8px;font-size:.75em">'+v.e+' '+v.l+'</span> · <span style="color:#3a5070">'+bpm+' BPM</span><br>';
   (song.lyrics||[]).forEach(function(l){html+='<span style="color:#ccd">'+l+'</span><br>';});
   document.getElementById('novaOut').innerHTML=html;
-  nova('🎉 Built <b>'+song.name+'</b>! Playing now.');
+  nova('🎉 Built <b>'+song.name+'</b>! '+v.e+' '+v.l+' vibes — playing now.');
   window._novaPat=song.pattern||SEQ_PAT;
   window._novaMel=(song.melody||['C','E','G','A']).map(function(n){return NF[n]||NF.C;});
   if(!playing)startPlayback();
-  toast('🤖 Track loaded!');
+  toast(v.e+' '+v.l+' track loaded!');
 }
 
 
