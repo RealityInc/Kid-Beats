@@ -102,7 +102,7 @@ class BackingTrackGenerator {
     const hat = new Tone.NoiseSynth({ envelope: { attack: 0.001, decay: 0.05, sustain: 0 } });
     const bass = new Tone.Synth({ oscillator: { type: 'triangle' } });
     const poly = new Tone.PolySynth(Tone.Synth);
-    const melody = new Tone.Synth({ oscillator: { type: 'sine' }, envelope: { attack: 0.02, decay: 0.25, sustain: 0.4, release: 0.4 } });
+    const melody = new Tone.Synth({ oscillator: { type: 'triangle' }, envelope: { attack: 0.02, decay: 0.2, sustain: 0.5, release: 0.3 } });
     const reverb = new Tone.Reverb({ decay: 2.5, wet: 0.2 });
     const delay = new Tone.PingPongDelay('8n', 0.15);
     const limiter = new Tone.Limiter(-1).toDestination();
@@ -127,16 +127,16 @@ class BackingTrackGenerator {
       return midi + ((bestPc - pc + 6) % 12) - 6;
     }
     const eighthSec = (60 / effectiveBpm) / 2;
-    const highConf = (analysis.pitchContour || []).filter(p => p.confidence >= 0.35);
-    let melodyMotif;
+    const highConf = (analysis.pitchContour || []).filter(p => p.confidence >= 0.28);
+    let melodyMotif, melodySource = 'arpeggio';
     if (highConf.length >= 4) {
       const seen = new Set();
-      const candidates = highConf.filter(p => p.time < secPerBar * 2).map(p => {
+      const candidates = highConf.filter(p => p.time < secPerBar).map(p => {
         const slot = Math.round(p.time / eighthSec);
         let m = p.midi; while (m < 60) m += 12; while (m > 83) m -= 12;
         return { slot, note: Tone.Frequency(snapMidi(m), 'midi').toNote() };
       }).filter(m => { if (seen.has(m.slot)) return false; seen.add(m.slot); return true; });
-      if (candidates.length >= 3) melodyMotif = candidates.map(m => ({ time: m.slot * eighthSec, note: m.note }));
+      if (candidates.length >= 3) { melodyMotif = candidates.map(m => ({ time: m.slot * eighthSec, note: m.note })); melodySource = 'pitchContour'; }
     }
     if (!melodyMotif) {
       // Fallback: mood-specific scale arpeggio
@@ -180,14 +180,11 @@ class BackingTrackGenerator {
       Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[2], '8n', time + secPerBar * 0.5, 0.45), t);
       if (isHipHop) Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[0], '16n', time, 0.4), t + secPerBar * 0.375);
 
-      // Melody loops every 2 bars
-      if (bar % 2 === 0) {
-        melodyMotif.forEach(m => Tone.Transport.schedule((time) => melody.triggerAttackRelease(m.note, '8n', time, 0.38), t + m.time));
-      }
+      melodyMotif.forEach(m => Tone.Transport.schedule((time) => melody.triggerAttackRelease(m.note, '8n', time, 0.55), t + m.time));
     }
     Tone.Transport.swing = isHipHop ? 0.2 : (is4OnFloor || isRock) ? 0.02 : isCountry ? 0.06 : 0.08;
     Tone.Transport.schedule(() => Tone.Transport.stop(), totalSec);
-    return { bars, totalSec, effectiveBpm };
+    return { bars, totalSec, effectiveBpm, complexity: Number(complexity.toFixed(2)), melodySource };
   }
 }
 
@@ -406,7 +403,7 @@ async function regenerate() {
   try {
     const res = await generator.generate(analysis, { mood, style, length: lengthSelect.value });
     generatedResult = res;
-    debug.backing = `generated (${res.bars} bars, ${res.totalSec.toFixed(1)}s)`;
+    debug.backing = `generated (${res.bars} bars, ${res.totalSec.toFixed(1)}s, bpm:${res.effectiveBpm}, complexity:${res.complexity}, melody:${res.melodySource})`;
     debug.context = Tone.context.state;
     setDebug();
     stateMachine.set('generated');
