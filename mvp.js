@@ -162,8 +162,15 @@ class PlaybackEngine {
   _ensureAudioChain() {
     if (this._source) return;
     this._source = Tone.context.createMediaElementSource(this._voiceWA);
-    this._pitchShift = new Tone.PitchShift(0).toDestination();
-    this._source.connect(this._pitchShift.input);
+    try {
+      this._pitchShift = new Tone.PitchShift(0).toDestination();
+      this._source.connect(this._pitchShift.input);
+    } catch(e) {
+      // PitchShift (AudioWorklet) unavailable — connect directly to Tone's master output
+      this._pitchShift = null;
+      const dest = Tone.getDestination();
+      this._source.connect(dest && dest.input ? dest.input : this._source.context.destination);
+    }
   }
   setVoiceUrl(url) { this.voice.src = url; this._voiceWA.src = url; }
   setTuning(pitchSchedule, tempoRatio) {
