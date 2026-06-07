@@ -313,11 +313,17 @@ function computePitchSchedule(pitchContour, key, scale) {
   return raw.filter((e, i) => i === 0 || e.shift !== raw[i - 1].shift);
 }
 
+function scaleForMood(mood) {
+  return ['sad', 'spooky', 'epic'].includes(mood) ? 'minor' : 'major';
+}
+
 function applyTuning() {
   if (!document.getElementById('tuneSyncToggle').checked || !generatedResult || !analysis) {
     return player.clearTuning();
   }
-  const schedule = computePitchSchedule(analysis.pitchContour, analysis.key, analysis.scale);
+  const mood = moodEngine.resolve(moodSelect.value, analysis.mood);
+  const targetScale = scaleForMood(mood);
+  const schedule = computePitchSchedule(analysis.pitchContour, analysis.key, targetScale);
   const vocalBpm = typeof analysis.bpm === 'number' ? analysis.bpm : generatedResult.effectiveBpm;
   player.setTuning(schedule, generatedResult.effectiveBpm / vocalBpm);
 }
@@ -364,6 +370,9 @@ clearBtn.onclick = resetAll;
 document.getElementById('startOver2Btn').onclick = resetAll;
 document.getElementById('startOver3Btn').onclick = resetAll;
 document.getElementById('tuneSyncToggle').onchange = applyTuning;
+const isPlaying = () => ['playingBacking', 'playingTogether'].includes(stateMachine.state);
+moodSelect.onchange = () => { applyTuning(); if (generatedResult && !isPlaying()) regenerate(); };
+styleSelect.onchange = () => { if (generatedResult && !isPlaying()) regenerate(); };
 
 analyzeBtn.onclick = async () => {
   if (!vocalBlob) return;
