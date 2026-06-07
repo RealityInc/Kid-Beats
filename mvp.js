@@ -243,9 +243,12 @@ class PlaybackEngine {
   }
   async playBacking() { await Tone.start(); this.stop(); Tone.Transport.position = 0; Tone.Transport.start(); }
   async playTogether() {
-    this.stop(); this.voice.currentTime = 0; Tone.Transport.position = 0;
-    // Call play() synchronously before any await so iOS gesture context is preserved
-    const voicePlay = this.voice.play();
+    this.stop();
+    this._ensureAudioChain(); // wire _voiceWA through Web Audio chain (idempotent)
+    this._voiceWA.currentTime = 0;
+    Tone.Transport.position = 0;
+    // Call _voiceWA.play() synchronously before any await so iOS gesture context is preserved
+    const voicePlay = this._voiceWA.play();
     await Tone.start(); Tone.Transport.start();
     try { await voicePlay; } catch(e) {}
     this._startPitchTracking();
