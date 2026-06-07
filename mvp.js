@@ -42,7 +42,7 @@ function adaptAnalysis(raw) {
   const key = raw.key === 'uncertain' ? 'C' : raw.key;
   const loudness = raw.mood?.factors?.loudness ?? 0;
   const minor = scale === 'minor';
-  const fast = bpm > 120;
+  const fast = bpm > 105;
   const loud = loudness > 0.05;
   let mood;
   if (minor && fast && loud) mood = 'spooky';
@@ -87,7 +87,7 @@ class BackingTrackGenerator {
     const isCountry = style === 'country';
     const is4OnFloor = style === 'dance';
     const isHipHop = style === 'hip-hop';
-    const moodBpmRange = { spooky:[55,85], sad:[60,80], chill:[65,85], silly:[85,110], happy:[95,120], epic:[125,150] };
+    const moodBpmRange = { spooky:[50,95], sad:[50,90], chill:[55,100], silly:[75,130], happy:[85,135], epic:[110,165] };
     const [bpmMin, bpmMax] = moodBpmRange[mood] ?? [80, 120];
     const effectiveBpm = Math.max(bpmMin, Math.min(bpmMax, analysis.bpm));
     Tone.Transport.bpm.value = effectiveBpm;
@@ -145,18 +145,20 @@ class BackingTrackGenerator {
       melodyMotif = (pats[mood] || pats.happy).map((idx, i) => ({ time: i * eighthSec, note: pitches[idx % pitches.length] }));
     }
 
-    // Drum complexity driven by detected BPM + average phrase energy
+    // Drum patterns driven directly by detected BPM
     const phraseEnergies = analysis.phrases.map(p => p.energy);
     const avgEnergy = phraseEnergies.reduce((a, v) => a + v, 0) / Math.max(1, phraseEnergies.length);
-    const complexity = Math.min(1, Math.max(0, (effectiveBpm - 70) / 80 * 0.6 + Math.min(avgEnergy * 15, 1) * 0.4));
-    const isHalfTime = mood === 'spooky' || mood === 'sad' || mood === 'chill';
-    const kickBeats = is4OnFloor        ? [0, 0.25, 0.5, 0.75]
-                    : isHalfTime        ? [0, 0.5]
-                    : complexity > 0.7  ? [0, 0.375, 0.5, 0.875]
-                    : complexity > 0.4  ? [0, 0.5]
-                    :                     [0];
-    const snareBeats = isHalfTime ? [0.5] : isCountry ? [] : [0.25, 0.75];
-    const hatDiv = complexity > 0.65 ? 8 : complexity > 0.35 ? 4 : 2;
+    const isHalfTime = effectiveBpm < 85 || mood === 'spooky' || mood === 'sad';
+    const isDoubletime = effectiveBpm > 115 || mood === 'epic';
+    const kickBeats = is4OnFloor   ? [0, 0.25, 0.5, 0.75]
+                    : isHalfTime   ? [0]
+                    : isDoubletime ? [0, 0.375, 0.5, 0.875]
+                    :                [0, 0.5];
+    const snareBeats = isHalfTime   ? [0.5]
+                     : isCountry    ? []
+                     : isDoubletime ? [0.25, 0.5, 0.75]
+                     :                [0.25, 0.75];
+    const hatDiv = isDoubletime ? 8 : effectiveBpm > 95 ? 4 : 2;
     const kickSet = new Set(kickBeats.map(f => Math.round(f * 1000)));
     const hatBeats = Array.from({ length: hatDiv }, (_, i) => i / hatDiv).filter(f => !kickSet.has(Math.round(f * 1000)));
     const chordDur = isHipHop ? '4n' : isCountry ? '8n' : `${secPerBar}s`;
@@ -184,7 +186,7 @@ class BackingTrackGenerator {
     }
     Tone.Transport.swing = isHipHop ? 0.2 : (is4OnFloor || isRock) ? 0.02 : isCountry ? 0.06 : 0.08;
     Tone.Transport.schedule(() => Tone.Transport.stop(), totalSec);
-    return { bars, totalSec, effectiveBpm, complexity: Number(complexity.toFixed(2)), melodySource };
+    return { bars, totalSec, effectiveBpm, drumMode: isHalfTime ? 'half-time' : isDoubletime ? 'double-time' : 'standard', melodySource };
   }
 }
 
@@ -403,7 +405,7 @@ async function regenerate() {
   try {
     const res = await generator.generate(analysis, { mood, style, length: lengthSelect.value });
     generatedResult = res;
-    debug.backing = `generated (${res.bars} bars, ${res.totalSec.toFixed(1)}s, bpm:${res.effectiveBpm}, complexity:${res.complexity}, melody:${res.melodySource})`;
+    debug.backing = `generated (${res.bars} bars, ${res.totalSec.toFixed(1)}s, bpm:${res.effectiveBpm}, drums:${res.drumMode}, melody:${res.melodySource})`;
     debug.context = Tone.context.state;
     setDebug();
     stateMachine.set('generated');
