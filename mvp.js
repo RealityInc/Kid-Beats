@@ -152,30 +152,27 @@ class BackingTrackGenerator {
 
 class PlaybackEngine {
   constructor() {
+    // this.voice: plain HTML audio element — used for direct playback (playVoice)
+    // this._voiceWA: separate element routed through Web Audio — used for playTogether
     this.voice = new Audio();
+    this._voiceWA = new Audio();
     this._source = null; this._pitchShift = null; this._rafId = null;
     this._rateCompensation = 0; this._pitchSchedule = null;
   }
   _ensureAudioChain() {
     if (this._source) return;
-    this._source = Tone.context.createMediaElementSource(this.voice);
-    try {
-      this._pitchShift = new Tone.PitchShift(0).toDestination();
-      this._source.connect(this._pitchShift.input);
-    } catch(e) {
-      // PitchShift (AudioWorklet) unavailable on this platform — connect directly
-      this._pitchShift = null;
-      this._source.connect(Tone.context.destination);
-    }
+    this._source = Tone.context.createMediaElementSource(this._voiceWA);
+    this._pitchShift = new Tone.PitchShift(0).toDestination();
+    this._source.connect(this._pitchShift.input);
   }
-  setVoiceUrl(url) { this.voice.src = url; }
+  setVoiceUrl(url) { this.voice.src = url; this._voiceWA.src = url; }
   setTuning(pitchSchedule, tempoRatio) {
     this._pitchSchedule = pitchSchedule;
-    this.voice.playbackRate = tempoRatio;
+    this._voiceWA.playbackRate = tempoRatio;
     this._rateCompensation = -12 * Math.log2(tempoRatio);
   }
   clearTuning() {
-    this._pitchSchedule = null; this.voice.playbackRate = 1; this._rateCompensation = 0;
+    this._pitchSchedule = null; this._voiceWA.playbackRate = 1; this._rateCompensation = 0;
     if (this._pitchShift) this._pitchShift.pitch = 0;
   }
   _startPitchTracking() {
@@ -184,10 +181,10 @@ class PlaybackEngine {
     let i = 0;
     const schedule = this._pitchSchedule;
     const loop = () => {
-      const t = this.voice.currentTime;
+      const t = this._voiceWA.currentTime;
       while (i < schedule.length - 1 && schedule[i + 1].time <= t) i++;
       if (schedule.length) this._pitchShift.pitch = schedule[i].shift + this._rateCompensation;
-      if (!this.voice.paused) this._rafId = requestAnimationFrame(loop);
+      if (!this._voiceWA.paused) this._rafId = requestAnimationFrame(loop);
     };
     this._rafId = requestAnimationFrame(loop);
   }
@@ -195,16 +192,18 @@ class PlaybackEngine {
     if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = null; }
   }
   async playVoice() {
-    await Tone.start(); this.stop(); this._ensureAudioChain(); await this.voice.play(); this._startPitchTracking();
+    this.stop(); this.voice.currentTime = 0; await this.voice.play();
   }
   async playBacking() { await Tone.start(); this.stop(); Tone.Transport.position = 0; Tone.Transport.start(); }
   async playTogether() {
     await Tone.start(); this.stop(); this._ensureAudioChain();
-    this.voice.currentTime = 0; Tone.Transport.position = 0; Tone.Transport.start();
-    await this.voice.play(); this._startPitchTracking();
+    this._voiceWA.currentTime = 0; Tone.Transport.position = 0; Tone.Transport.start();
+    await this._voiceWA.play(); this._startPitchTracking();
   }
   stop() {
-    this._stopPitchTracking(); this.voice.pause(); this.voice.currentTime = 0;
+    this._stopPitchTracking();
+    this.voice.pause(); this.voice.currentTime = 0;
+    this._voiceWA.pause(); this._voiceWA.currentTime = 0;
     if (this._pitchShift) this._pitchShift.pitch = 0; Tone.Transport.stop();
   }
 }
