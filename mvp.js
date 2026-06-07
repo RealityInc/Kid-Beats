@@ -189,7 +189,7 @@ class PlaybackEngine {
     if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = null; }
   }
   async playVoice() {
-    this.stop(); this._ensureAudioChain(); await this.voice.play(); this._startPitchTracking();
+    await Tone.start(); this.stop(); this._ensureAudioChain(); await this.voice.play(); this._startPitchTracking();
   }
   async playBacking() { await Tone.start(); this.stop(); Tone.Transport.position = 0; Tone.Transport.start(); }
   async playTogether() {
@@ -292,7 +292,7 @@ recordBtn.onclick = async () => {
   setDebug();
 };
 stopRecordBtn.onclick = () => { clearInterval(recordTimer); rec.stop(); stopRecordBtn.disabled = true; recordBtn.disabled = false; };
-playVoiceBtn.onclick = async () => { stateMachine.set('playingVoice'); await player.playVoice(); debug.playback='voice'; setDebug(); };
+playVoiceBtn.onclick = async () => { stateMachine.set('playingVoice'); try { await player.playVoice(); debug.playback='voice'; } catch(e) { debug.playback='error: '+(e?.message||e); setStatus('Playback error: '+(e?.message||'unknown')); } setDebug(); };
 uploadBtn.onclick = () => uploadInput.click();
 uploadInput.onchange = async (e) => { const f = e.target.files[0]; if (!f) return; setVocal(await upload.getBlob(f)); stateMachine.set('uploaded'); setStatus('Vocal uploaded.'); };
 function resetAll() {
@@ -365,7 +365,7 @@ async function regenerate() {
 generateBtn.onclick = regenerate;
 regenerateBtn.onclick = regenerate;
 backToAnalysisBtn.onclick = ()=>showScreen('screen-analysis');
-playVoice2Btn.onclick = ()=>player.playVoice();
+playVoice2Btn.onclick = async () => { try { await player.playVoice(); debug.playback='voice'; } catch(e) { debug.playback='error: '+(e?.message||e); } setDebug(); };
 playBackingBtn.onclick = ()=>{ stateMachine.set('playingBacking'); player.playBacking(); };
 playTogetherBtn.onclick = ()=>{ stateMachine.set('playingTogether'); player.playTogether(); };
 stopPlaybackBtn.onclick = ()=>{ stateMachine.set('stopped'); player.stop(); debug.playback='stopped'; setDebug(); };
