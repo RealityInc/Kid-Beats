@@ -137,6 +137,18 @@ function pickProgression(analysis, mood) {
   return pool[h];
 }
 
+function styleInstrumentDefaults(style, mood) {
+  if (style === 'country')       return { melody: 'pluck', bass: 'pluck', drums: 'clean' };
+  if (style === 'rock')          return { melody: 'lead',  bass: 'growl', drums: 'heavy' };
+  if (style === 'hip-hop')       return { melody: 'square',bass: 'sub',   drums: '808'   };
+  if (style === 'dance')         return { melody: 'lead',  bass: 'square',drums: 'clean' };
+  if (style === 'weird electro') return { melody: 'square',bass: 'growl', drums: 'heavy' };
+  if (mood === 'spooky')         return { melody: 'bell',  bass: 'sub',   drums: 'heavy' };
+  if (mood === 'chill')          return { melody: 'bell',  bass: 'sub',   drums: 'lofi'  };
+  if (mood === 'epic')           return { melody: 'lead',  bass: 'growl', drums: 'heavy' };
+  return { melody: 'pluck', bass: 'sub', drums: 'clean' };
+}
+
 class BackingTrackGenerator {
   constructor() { this._nodes = []; }
   _dispose() { this._nodes.forEach(n => { try { n.dispose(); } catch(e) {} }); this._nodes = []; }
@@ -148,6 +160,10 @@ class BackingTrackGenerator {
     const style = options.style;
     const instruments = options.instruments || {};
     const bpmOverride = options.bpmOverride || null;
+    const styleDefs = styleInstrumentDefaults(style, mood);
+    const melKey   = instruments.melody === 'auto' ? styleDefs.melody : instruments.melody;
+    const bassKey  = instruments.bass   === 'auto' ? styleDefs.bass   : instruments.bass;
+    const drumsKey = instruments.drums  === 'auto' ? styleDefs.drums  : instruments.drums;
     const isRock = style === 'rock';
     const isCountry = style === 'country';
     const is4OnFloor = style === 'dance';
@@ -171,7 +187,7 @@ class BackingTrackGenerator {
       heavy: { kickOpts:{pitchDecay:0.06,octaves:6,envelope:{attack:0.001,decay:0.16,sustain:0}}, snareDecay:0.07, noiseType:'white' },
       '808': { kickOpts:{pitchDecay:0.32,octaves:9,envelope:{attack:0.001,decay:0.65,sustain:0}}, snareDecay:0.14, noiseType:'pink' },
     };
-    const kit = kitPresets[instruments.drums];
+    const kit = kitPresets[drumsKey];
     const kickOpts = kit ? kit.kickOpts
       : isHipHop ? { pitchDecay:0.18,octaves:9,envelope:{attack:0.001,decay:0.6,sustain:0} }
       : isRock    ? { pitchDecay:0.06,octaves:5,envelope:{attack:0.001,decay:0.2,sustain:0} }
@@ -189,15 +205,18 @@ class BackingTrackGenerator {
       square:['square',   {attack:0.01,decay:0.2, sustain:0.6,release:0.3}],
       pluck: ['triangle', {attack:0.001,decay:0.4,sustain:0,  release:0.2}],
     };
-    const bassP = bassPresets[instruments.bass];
+    const bassP = bassPresets[bassKey];
     const bassOscFinal = bassP ? bassP[0] : isHipHop ? 'sine' : (isRock||isElectro) ? 'sawtooth' : is4OnFloor ? 'square' : 'triangle';
     const bassEnv  = bassP ? bassP[1] : {attack:0.01,decay:0.3,sustain:0.6,release:0.4};
     const bass = new Tone.Synth({ oscillator:{type:bassOscFinal}, envelope:bassEnv });
 
-    // Chords — slow attack for atmospheric moods, sawtooth edge for rock
-    const chordAtk = mood === 'spooky' ? 2.0 : (mood === 'chill' || mood === 'sad') ? 1.0 : 0.04;
-    const chordOsc = (mood === 'spooky' || mood === 'chill' || mood === 'sad') ? 'sine' : isRock ? 'sawtooth' : 'triangle';
-    const poly = new Tone.PolySynth(Tone.Synth, { oscillator:{type:chordOsc}, envelope:{attack:chordAtk,decay:0.4,sustain:0.7,release:1.2} });
+    // Chords — slow attack for atmospheric moods, sawtooth edge for rock, plucky strum for country
+    const chordAtk = isCountry ? 0.001 : mood === 'spooky' ? 2.0 : (mood === 'chill' || mood === 'sad') ? 1.0 : 0.04;
+    const chordOsc = isCountry ? 'triangle' : (mood === 'spooky' || mood === 'chill' || mood === 'sad') ? 'sine' : isRock ? 'sawtooth' : 'triangle';
+    const chordEnv = isCountry
+      ? { attack: 0.001, decay: 0.55, sustain: 0, release: 0.3 }  // guitar strum — zero sustain, natural decay
+      : { attack: chordAtk, decay: 0.4, sustain: 0.7, release: 1.2 };
+    const poly = new Tone.PolySynth(Tone.Synth, { oscillator:{type:chordOsc}, envelope:chordEnv });
 
     // Melody instrument — override with user selection or derive from style/mood
     const melPresets = {
@@ -207,10 +226,17 @@ class BackingTrackGenerator {
       flute: ['sine',     {attack:0.06, decay:0.1, sustain:0.7,release:0.3}],
       square:['square',   {attack:0.01, decay:0.1, sustain:0.5,release:0.15}],
     };
-    const melP = melPresets[instruments.melody];
-    const melOsc = melP ? melP[0] : (isRock||isElectro) ? 'sawtooth' : (mood==='spooky'||mood==='sad') ? 'sine' : 'triangle';
-    const melEnv = melP ? melP[1] : {attack:0.02,decay:0.2,sustain:0.5,release:0.3};
-    const melody = new Tone.Synth({ oscillator:{type:melOsc}, envelope:melEnv });
+    // Country uses Karplus-Strong (PluckSynth) for a realistic guitar pick sound
+    const isGuitarMelody = isCountry;
+    let melody;
+    if (isGuitarMelody) {
+      melody = new Tone.PluckSynth({ attackNoise: 1.0, dampening: 3000, resonance: 0.98 });
+    } else {
+      const melP = melPresets[melKey];
+      const melOsc = melP ? melP[0] : (isRock||isElectro) ? 'sawtooth' : (mood==='spooky'||mood==='sad') ? 'sine' : 'triangle';
+      const melEnv = melP ? melP[1] : {attack:0.02,decay:0.2,sustain:0.5,release:0.3};
+      melody = new Tone.Synth({ oscillator:{type:melOsc}, envelope:melEnv });
+    }
 
     // Atmospheric pad — lush long notes for spooky/chill/sad/epic
     const usePad = ['spooky', 'chill', 'sad', 'epic'].includes(mood);
@@ -311,10 +337,10 @@ class BackingTrackGenerator {
                     : isDoubletime ? [0, 0.375, 0.5, 0.875]
                     :                [0, 0.5];
     const snareBeats = isHalfTime   ? [0.5]
-                     : isCountry    ? []
                      : isDoubletime ? [0.25, 0.5, 0.75]
                      :                [0.25, 0.75];
-    const hatDiv = isDoubletime ? 8 : effectiveBpm > 95 ? 4 : 2;
+    // Country: no hi-hat (acoustic/brushed feel); hip-hop: sparse; everything else: normal grid
+    const hatDiv = isCountry ? 0 : isHipHop ? 2 : isDoubletime ? 8 : effectiveBpm > 95 ? 4 : 2;
     const kickSet = new Set(kickBeats.map(f => Math.round(f * 1000)));
     const hatBeats = Array.from({ length: hatDiv }, (_, i) => i / hatDiv).filter(f => !kickSet.has(Math.round(f * 1000)));
 
@@ -325,7 +351,7 @@ class BackingTrackGenerator {
       const chord = prog[bar % prog.length].map((n) => Tone.Frequency(root).transpose(n).toNote());
 
       kickBeats.forEach(f => Tone.Transport.schedule((time) => drum.triggerAttackRelease('C1', isHipHop ? '4n' : '8n', time, 0.65 + dynVel * 0.3), t + secPerBar * f));
-      snareBeats.forEach(f => Tone.Transport.schedule((time) => snare.triggerAttackRelease('8n', time, 0.25 + dynVel * 0.2), t + secPerBar * f));
+      snareBeats.forEach(f => Tone.Transport.schedule((time) => snare.triggerAttackRelease('8n', time, isCountry ? 0.12 + dynVel * 0.1 : 0.25 + dynVel * 0.2), t + secPerBar * f));
       hatBeats.forEach(f => Tone.Transport.schedule((time) => hat.triggerAttackRelease('16n', time, 0.08 + dynVel * 0.15), t + secPerBar * f));
 
       // Chords — genre-specific patterns
