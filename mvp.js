@@ -203,7 +203,7 @@ const MOOD_SCALES = {
   spooky: [0,2,3,5,7,8,11], silly: [0,2,4,7,9], epic: [0,2,3,5,7,9,10],
 };
 
-function pickProgression(analysis, mood, style) {
+function pickProgression(analysis, mood, style, seed) {
   const styleMap = STYLE_PROGRESSIONS[style];
   const pool = styleMap
     ? (styleMap[mood] ?? styleMap.happy ?? Object.values(styleMap)[0])
@@ -213,7 +213,7 @@ function pickProgression(analysis, mood, style) {
   const bpmInt = typeof analysis.bpm === 'number' ? Math.round(analysis.bpm) : 90;
   const ph = (analysis.phrases || []).length;
   const cl = (analysis.pitchContour || []).length;
-  const h = Math.abs(ki * 31 + bpmInt * 17 + ph * 53 + cl * 11) % pool.length;
+  const h = Math.abs(ki * 31 + bpmInt * 17 + ph * 53 + cl * 11 + (seed ?? 0) * 7) % pool.length;
   return pool[h];
 }
 
@@ -334,8 +334,8 @@ class BackingTrackGenerator {
     const openHat = useOpenHat ? new Tone.MetalSynth({ frequency: 400, envelope: { attack: 0.001, decay: 0.9, release: 0.5 }, resonance: 4000, harmonicity: 5.1, modulationIndex: 32, octaves: 1.5 }) : null;
 
     // Effects — reverb and delay scale with mood atmosphere
-    const reverbDecay = mood === 'spooky' ? 5.0 : mood === 'chill' ? 3.0 : mood === 'sad' ? 2.5 : 1.5;
-    const reverbWet = mood === 'spooky' ? 0.45 : mood === 'chill' ? 0.3 : mood === 'sad' ? 0.22 : 0.15;
+    const reverbDecay = mood === 'spooky' ? 5.0 : mood === 'chill' ? 3.5 : mood === 'sad' ? 3.0 : 2.2;
+    const reverbWet = mood === 'spooky' ? 0.5 : mood === 'chill' ? 0.4 : mood === 'sad' ? 0.35 : 0.28;
     const reverb = new Tone.Reverb({ decay: reverbDecay, wet: reverbWet });
     const delay = new Tone.PingPongDelay('8n', (mood === 'spooky' || mood === 'sad') ? 0.22 : 0.12);
     const limiter = new Tone.Limiter(-1).toDestination();
@@ -399,7 +399,8 @@ class BackingTrackGenerator {
 
     // Pick a chord progression from the pool using a hash of the analysis
     // so each unique recording gets a distinct progression.
-    const prog = pickProgression(analysis, mood, style);
+    const arrangeSeed = Math.floor(Math.random() * 10000);
+    const prog = pickProgression(analysis, mood, style, arrangeSeed);
     const SI = MOOD_SCALES[mood] ?? MOOD_SCALES.happy;
 
     const NI = { C:0,'C#':1,D:2,'D#':3,E:4,F:5,'F#':6,G:7,'G#':8,A:9,'A#':10,B:11 };
@@ -445,6 +446,25 @@ class BackingTrackGenerator {
       melodyMotif = (stylePats[style] || moodPats[mood] || moodPats.happy).map((idx, i) => ({ time: i * eighthSec, note: pitches[idx % pitches.length] }));
     }
 
+    // B-phrase: 4-note answer to the A-phrase, pitched up ~3 semitones within the scale,
+    // placed in the second half of the bar (beat 3 onward) for call-and-response feel
+    const bMotif = melodyMotif.slice(4).map((m, i) => {
+      let midi = 60; try { midi = Tone.Frequency(m.note).toMidi(); } catch {}
+      return { time: secPerBar * 0.5 + i * eighthSec, note: Tone.Frequency(snapMidi(midi + 3), 'midi').toNote() };
+    });
+
+    // Song structure helpers
+    const intro = 2;                          // bars of sparse intro
+    const outro = Math.max(0, bars - 2);      // bar index where outro starts
+    const getSection = (bar) => {
+      if (bar < intro) return 'intro';
+      if (bar >= outro) return 'outro';
+      const rel = bar - intro;
+      const span = Math.max(1, outro - intro);
+      if (rel / span < 0.45) return 'verse';
+      return 'chorus';
+    };
+
     // Humanization helpers — add subtle timing/velocity variation at non-zero humanize
     const hTime = humanize > 0
       ? (t) => t + (Math.random() - 0.5) * humanize * 0.025  // ±12.5ms at 100%
@@ -473,77 +493,114 @@ class BackingTrackGenerator {
     for (let bar = 0; bar < bars; bar++) {
       const t = bar * secPerBar;
       const barE = phraseEnergies[Math.floor(t / 4)] ?? avgEnergy;
-      const dynVel = Math.max(0.25, Math.min(1.0, barE / Math.max(avgEnergy * 1.2, 0.001)));
-      const chord = prog[bar % prog.length].map((n) => Tone.Frequency(root).transpose(n).toNote());
+      const section = getSection(bar);
+      const isIntro = section === 'intro';
+      const isOutro = section === 'outro';
+      const isVerse = section === 'verse';
+      const isChorus = section === 'chorus';
+      const secVelMult = isIntro ? 0.55 : isOutro ? 0.65 : 1.0;
+      const dynVel = Math.max(0.25, Math.min(1.0, barE / Math.max(avgEnergy * 1.2, 0.001))) * secVelMult;
+      // Chords voiced one octave above the bass root to separate frequency ranges
+      const chordRoot = Tone.Frequency(root).transpose(12).toNote();
+      const chord = prog[bar % prog.length].map((n) => Tone.Frequency(chordRoot).transpose(n).toNote());
+
+      // Drum fill: snare roll on last beat of every 4th bar (except intro)
+      const isFillBar = !isIntro && bar > 0 && bar % 4 === 3;
 
       kickBeats.forEach(f => {
         const st = hTime(t + secPerBar * f), kdur = isHipHop ? '4n' : '8n', kv = hVel(0.65 + dynVel * 0.3);
         sched('kick', { note:'C1', duration:kdur, velocity:kv }, (time) => drum.triggerAttackRelease('C1', kdur, time, kv), st);
       });
       snareBeats.forEach(f => {
+        if (isFillBar && f >= 0.75) return; // last beat replaced by fill below
         const st = hTime(t + secPerBar * f), sv = hVel(isCountry ? 0.12 + dynVel * 0.1 : 0.25 + dynVel * 0.2);
         sched('snare', { duration:'8n', velocity:sv }, (time) => snare.triggerAttackRelease('8n', time, sv), st);
       });
+      if (isFillBar) {
+        // 4-hit snare roll on the last beat of the bar
+        [0, 0.0625, 0.125, 0.1875].forEach(off => {
+          const ft = hTime(t + secPerBar * (0.75 + off)), fv = hVel(0.3 + dynVel * 0.25);
+          sched('snare', { duration:'16n', velocity:fv }, (time) => snare.triggerAttackRelease('16n', time, fv), ft);
+        });
+      }
       hatBeats.forEach(f => {
         const st = hTime(t + secPerBar * f), hv = hVel(0.08 + dynVel * 0.15);
         sched('hat', { duration:'16n', velocity:hv }, (time) => hat.triggerAttackRelease('16n', time, hv), st);
       });
 
-      // Chords — genre-specific patterns
-      if (isHipHop) {
-        const cv1 = hVel(0.3), cv2 = hVel(0.22);
-        sched('chords', { notes:chord, duration:'4n', velocity:cv1 }, (time) => poly.triggerAttackRelease(chord, '4n', time, cv1), hTime(t));
-        sched('chords', { notes:chord, duration:'8n', velocity:cv2 }, (time) => poly.triggerAttackRelease(chord, '8n', time, cv2), hTime(t + secPerBar * 0.375));
-      } else if (isCountry) {
-        const strm = chord.slice(0, 2), cs = hVel(0.32);
-        sched('chords', { notes:strm, duration:'8n', velocity:cs }, (time) => poly.triggerAttackRelease(strm, '8n', time, cs), hTime(t + secPerBar * 0.25));
-        sched('chords', { notes:strm, duration:'8n', velocity:cs }, (time) => poly.triggerAttackRelease(strm, '8n', time, cs), hTime(t + secPerBar * 0.75));
-      } else if (isRock) {
-        [0, 0.25, 0.5, 0.75].forEach(f => {
-          const rv = hVel(0.38);
-          sched('chords', { notes:chord, duration:'16n', velocity:rv }, (time) => poly.triggerAttackRelease(chord, '16n', time, rv), hTime(t + secPerBar * f));
-        });
-      } else if (mood === 'epic') {
-        const edur = `${(secPerBar * 0.45).toFixed(3)}s`, ev1 = hVel(0.4), ev2 = hVel(0.35);
-        sched('chords', { notes:chord, duration:edur, velocity:ev1 }, (time) => poly.triggerAttackRelease(chord, edur, time, ev1), hTime(t));
-        sched('chords', { notes:chord, duration:edur, velocity:ev2 }, (time) => poly.triggerAttackRelease(chord, edur, time, ev2), hTime(t + secPerBar * 0.5));
-      } else {
-        const cdur = `${(secPerBar * 0.95).toFixed(3)}s`, cdv = hVel(0.35);
-        sched('chords', { notes:chord, duration:cdur, velocity:cdv }, (time) => poly.triggerAttackRelease(chord, cdur, time, cdv), hTime(t));
+      // Chords — skip in intro; genre-specific patterns otherwise
+      if (!isIntro) {
+        if (isHipHop) {
+          const cv1 = hVel(0.3), cv2 = hVel(0.22);
+          sched('chords', { notes:chord, duration:'4n', velocity:cv1 }, (time) => poly.triggerAttackRelease(chord, '4n', time, cv1), hTime(t));
+          sched('chords', { notes:chord, duration:'8n', velocity:cv2 }, (time) => poly.triggerAttackRelease(chord, '8n', time, cv2), hTime(t + secPerBar * 0.375));
+        } else if (isCountry) {
+          const strm = chord.slice(0, 2), cs = hVel(0.32);
+          sched('chords', { notes:strm, duration:'8n', velocity:cs }, (time) => poly.triggerAttackRelease(strm, '8n', time, cs), hTime(t + secPerBar * 0.25));
+          sched('chords', { notes:strm, duration:'8n', velocity:cs }, (time) => poly.triggerAttackRelease(strm, '8n', time, cs), hTime(t + secPerBar * 0.75));
+        } else if (isRock) {
+          [0, 0.25, 0.5, 0.75].forEach(f => {
+            const rv = hVel(0.38);
+            sched('chords', { notes:chord, duration:'16n', velocity:rv }, (time) => poly.triggerAttackRelease(chord, '16n', time, rv), hTime(t + secPerBar * f));
+          });
+        } else if (mood === 'epic') {
+          const edur = `${(secPerBar * 0.45).toFixed(3)}s`, ev1 = hVel(0.4), ev2 = hVel(0.35);
+          sched('chords', { notes:chord, duration:edur, velocity:ev1 }, (time) => poly.triggerAttackRelease(chord, edur, time, ev1), hTime(t));
+          sched('chords', { notes:chord, duration:edur, velocity:ev2 }, (time) => poly.triggerAttackRelease(chord, edur, time, ev2), hTime(t + secPerBar * 0.5));
+        } else {
+          const cdur = `${(secPerBar * 0.95).toFixed(3)}s`, cdv = hVel(0.35);
+          sched('chords', { notes:chord, duration:cdur, velocity:cdv }, (time) => poly.triggerAttackRelease(chord, cdur, time, cdv), hTime(t));
+        }
       }
 
-      // Bass — genre-specific patterns
+      // Bass plays every section (it's the foundation)
+      // Use the chord's actual root (first note), one octave down for proper bass register
+      const bassNote = Tone.Frequency(chord[0]).transpose(-12).toNote();
+      const bassNote2 = chord[2] ? Tone.Frequency(chord[2]).transpose(-12).toNote() : bassNote;
       if (isRock) {
         [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875].forEach(f => {
           const bv = hVel(0.5 + dynVel * 0.15);
-          sched('bass', { note:chord[0], duration:'16n', velocity:bv }, (time) => bass.triggerAttackRelease(chord[0], '16n', time, bv), hTime(t + secPerBar * f));
+          sched('bass', { note:bassNote, duration:'16n', velocity:bv }, (time) => bass.triggerAttackRelease(bassNote, '16n', time, bv), hTime(t + secPerBar * f));
         });
       } else if (isCountry) {
-        const b5 = chord[2] || chord[0], bv1 = hVel(0.65), bv2 = hVel(0.55);
-        sched('bass', { note:chord[0], duration:'8n', velocity:bv1 }, (time) => bass.triggerAttackRelease(chord[0], '8n', time, bv1), hTime(t));
-        sched('bass', { note:b5, duration:'8n', velocity:bv2 }, (time) => bass.triggerAttackRelease(b5, '8n', time, bv2), hTime(t + secPerBar * 0.5));
+        const bv1 = hVel(0.65), bv2 = hVel(0.55);
+        sched('bass', { note:bassNote, duration:'8n', velocity:bv1 }, (time) => bass.triggerAttackRelease(bassNote, '8n', time, bv1), hTime(t));
+        sched('bass', { note:bassNote2, duration:'8n', velocity:bv2 }, (time) => bass.triggerAttackRelease(bassNote2, '8n', time, bv2), hTime(t + secPerBar * 0.5));
       } else if (isHipHop) {
         const bldur = `${(secPerBar * 0.35).toFixed(3)}s`, bv1 = hVel(0.6), bv2 = hVel(0.4);
-        sched('bass', { note:chord[0], duration:bldur, velocity:bv1 }, (time) => bass.triggerAttackRelease(chord[0], bldur, time, bv1), hTime(t));
-        sched('bass', { note:chord[0], duration:'16n', velocity:bv2 }, (time) => bass.triggerAttackRelease(chord[0], '16n', time, bv2), hTime(t + secPerBar * 0.375));
+        sched('bass', { note:bassNote, duration:bldur, velocity:bv1 }, (time) => bass.triggerAttackRelease(bassNote, bldur, time, bv1), hTime(t));
+        sched('bass', { note:bassNote, duration:'16n', velocity:bv2 }, (time) => bass.triggerAttackRelease(bassNote, '16n', time, bv2), hTime(t + secPerBar * 0.375));
       } else {
-        const b2 = chord[2] || chord[0], bv1 = hVel(0.6), bv2 = hVel(0.45);
-        sched('bass', { note:chord[0], duration:'8n', velocity:bv1 }, (time) => bass.triggerAttackRelease(chord[0], '8n', time, bv1), hTime(t + secPerBar * 0.01));
-        sched('bass', { note:b2, duration:'8n', velocity:bv2 }, (time) => bass.triggerAttackRelease(b2, '8n', time, bv2), hTime(t + secPerBar * 0.5));
+        const bv1 = hVel(0.6), bv2 = hVel(0.45);
+        sched('bass', { note:bassNote, duration:'8n', velocity:bv1 }, (time) => bass.triggerAttackRelease(bassNote, '8n', time, bv1), hTime(t + secPerBar * 0.01));
+        sched('bass', { note:bassNote2, duration:'8n', velocity:bv2 }, (time) => bass.triggerAttackRelease(bassNote2, '8n', time, bv2), hTime(t + secPerBar * 0.5));
       }
 
-      melodyMotif.forEach(m => {
-        const mv = hVel(0.55);
-        sched('melody', { note:m.note, duration:'8n', velocity:mv }, (time) => melody.triggerAttackRelease(m.note, '8n', time, mv), hTime(t + m.time));
-      });
+      // Melody — A/B call-and-response; absent in intro and outro
+      if (!isIntro && !isOutro) {
+        const useAPhrase = bar % 4 < 2;     // bars 0,1 of each 4-bar group: full A motif
+        const useBPhrase = bar % 4 >= 2;    // bars 2,3: B answer phrase
+        if (useAPhrase) {
+          melodyMotif.forEach(m => {
+            const mv = hVel(0.55);
+            sched('melody', { note:m.note, duration:'8n', velocity:mv }, (time) => melody.triggerAttackRelease(m.note, '8n', time, mv), hTime(t + m.time));
+          });
+        }
+        if (useBPhrase && bMotif.length) {
+          bMotif.forEach(m => {
+            const mv = hVel(0.48);
+            sched('melody', { note:m.note, duration:'8n', velocity:mv }, (time) => melody.triggerAttackRelease(m.note, '8n', time, mv), hTime(t + m.time));
+          });
+        }
+      }
 
-      if (usePad && pad && bar % 2 === 0) {
+      if (usePad && pad && bar % 2 === 0 && !isIntro) {
         const padNotes = chord.slice(0, 2).map(n => Tone.Frequency(n).transpose(12).toNote());
         const pdur = `${(secPerBar * 1.9).toFixed(3)}s`, pv = hVel(0.25);
         sched('pad', { notes:padNotes, duration:pdur, velocity:pv }, (time) => pad.triggerAttackRelease(padNotes, pdur, time, pv), hTime(t));
       }
 
-      if (useArp && arp) {
+      if (useArp && arp && !isIntro) {
         const arpBase = chord.map(n => Tone.Frequency(n).transpose(12).toNote());
         const arpExt = [...arpBase, ...arpBase.map(n => Tone.Frequency(n).transpose(12).toNote())];
         for (let i = 0; i < 8; i++) {
