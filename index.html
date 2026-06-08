@@ -6,7 +6,7 @@
   <title>Kid Beats MVP</title>
   <style>
     body { font-family: Arial, sans-serif; margin: 0; background:#10131a; color:#f2f4f8; }
-    .app { max-width: 860px; margin: 0 auto; padding: 16px; }
+    .app { max-width: 900px; margin: 0 auto; padding: 16px; }
     h1,h2 { margin: 0 0 12px; }
     .card { background:#1a1f2b; border:1px solid #2c3446; border-radius:10px; padding:14px; margin-bottom:12px; }
     .row { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px; }
@@ -17,6 +17,44 @@
     .muted { color:#9eb0d0; font-size:0.9rem; }
     pre { white-space:pre-wrap; background:#0f1420; padding:8px; border-radius:8px; }
     .pill { display:inline-block; background:#2a3347; padding:4px 8px; border-radius:12px; margin-right:6px; margin-bottom:4px; }
+
+    /* ── Track editor ── */
+    #track-view-wrap { padding:0; overflow:hidden; }
+    .track-view-hdr { display:flex; justify-content:space-between; align-items:center; padding:10px 14px; border-bottom:1px solid #2c3446; background:#181f2e; }
+    .track-view-hdr span { font-weight:bold; font-size:0.95rem; }
+    .save-loop-btn { padding:5px 12px; border-radius:8px; background:#1e3a5c; border:1px solid #2d5a8e; color:#7ab8f5; cursor:pointer; font-size:0.82rem; }
+    .save-loop-btn:hover { background:#2a4e7a; }
+    .track-lane { display:flex; align-items:stretch; border-bottom:1px solid #12192a; min-height:28px; }
+    .track-lane:last-child { border-bottom:none; }
+    .track-hdr { width:112px; min-width:112px; display:flex; align-items:center; gap:5px; padding:4px 8px; background:#131924; border-right:1px solid #1c2235; flex-shrink:0; }
+    .track-label { font-size:0.75rem; color:#8aa0c0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .track-canvas { flex:1; display:block; cursor:pointer; min-width:0; }
+    .track-lane--mini .track-hdr { width:90px; min-width:90px; }
+    .track-lane--mini .track-canvas { cursor:default; }
+    .mute-btn { padding:2px 5px; font-size:0.68rem; border-radius:4px; border:1px solid #3d465c; background:#1a2133; color:#8aa0c0; cursor:pointer; flex-shrink:0; line-height:1.4; }
+    .mute-btn.muted { background:#4a1c2b; color:#ff7a90; border-color:#7a2a3a; }
+
+    /* ── Note pitch popup ── */
+    .note-popup { position:fixed; z-index:2000; background:#1a1f2b; border:1px solid #4a6080; border-radius:8px; padding:8px 10px; display:flex; gap:7px; align-items:center; box-shadow:0 6px 24px rgba(0,0,0,0.6); }
+    .note-popup select { background:#222a38; color:#f2f4f8; border:1px solid #3d465c; border-radius:6px; padding:4px 8px; }
+    .note-popup button { padding:3px 8px; border-radius:5px; border:1px solid #3d465c; background:#222a38; color:#9eb0d0; cursor:pointer; }
+
+    /* ── Master timeline ── */
+    #timeline-section { }
+    #timeline-section h2 { margin-bottom:4px; }
+    #timeline-list { min-height:56px; }
+    .timeline-block { background:#131924; border:1px solid #232d40; border-radius:8px; margin-bottom:8px; overflow:hidden; cursor:grab; user-select:none; }
+    .timeline-block.dragging { opacity:0.45; cursor:grabbing; }
+    .timeline-block:hover { border-color:#3d5070; }
+    .block-hdr { display:flex; align-items:center; gap:8px; padding:9px 12px; }
+    .block-grip { color:#3d4c60; font-size:1.1rem; cursor:grab; flex-shrink:0; }
+    .block-label { font-weight:bold; font-size:0.9rem; flex:1; }
+    .block-meta { font-size:0.78rem; }
+    .block-expand-btn { padding:3px 9px; border-radius:5px; border:1px solid #3d465c; background:#1e2738; color:#9eb0d0; cursor:pointer; font-size:0.78rem; }
+    .block-expand-btn:hover { background:#2a3550; }
+    .block-del-btn { padding:3px 7px; border-radius:5px; border:1px solid #3d465c; background:#1a2133; color:#9eb0d0; cursor:pointer; font-size:0.78rem; }
+    .block-del-btn:hover { background:#4a1c2b; color:#ff7a90; border-color:#7a2a3a; }
+    .block-tracks { border-top:1px solid #1c2638; }
   </style>
 </head>
 <body>
@@ -80,7 +118,7 @@
         <button id="regenerateBtn">Regenerate</button>
       </div>
       <div class="card" style="margin:0 0 10px; padding:10px;">
-        <div style="font-weight:bold;margin-bottom:8px;">Tracks</div>
+        <div style="font-weight:bold;margin-bottom:8px;">Instruments</div>
         <div class="row" style="margin-bottom:6px;">
           <label style="flex:1;min-width:120px;">&#127925; Melody
             <select id="melodyInstrument" style="width:100%">
@@ -116,6 +154,24 @@
         <button id="backToAnalysisBtn">Back to Analysis</button>
         <button id="startOver3Btn">Start Over</button>
       </div>
+
+      <!-- Track editor — shown after generate -->
+      <div id="track-view-wrap" class="card" style="display:none; padding:0; margin-top:12px;">
+        <div class="track-view-hdr">
+          <span>Track Editor</span>
+          <button id="addToTimelineBtn" class="save-loop-btn">+ Save to Timeline</button>
+        </div>
+        <div id="track-lanes"></div>
+      </div>
+    </section>
+
+    <!-- Master timeline — always visible -->
+    <section class="card" id="timeline-section">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <h2 style="margin:0;">Master Timeline</h2>
+        <span class="muted" style="font-size:0.8rem;">Save loops here to arrange your song</span>
+      </div>
+      <div id="timeline-list"></div>
     </section>
 
     <section class="card">
