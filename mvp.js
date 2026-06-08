@@ -170,10 +170,26 @@ class BackingTrackGenerator {
 
     const rootMap = { C:'C2','C#':'C#2',D:'D2','D#':'D#2',E:'E2',F:'F2','F#':'F#2',G:'G2','G#':'G#2',A:'A2','A#':'A#2',B:'B2' };
     const root = rootMap[analysis.key] || 'C2';
-    const prog = analysis.scale === 'minor' ? [[0,3,7],[5,8,12],[7,10,14],[3,7,10]] : [[0,4,7],[5,9,12],[7,11,14],[0,5,9]];
 
-    // Melody motif from pitch contour, snapped to detected scale
-    const SI = analysis.scale === 'minor' ? [0,2,3,5,7,8,10] : [0,2,4,5,7,9,11];
+    // Each mood gets its own chord progression and scale.
+    //   prog: semitone offsets from root for each chord tone, 4 bars
+    //   SI:   scale intervals (semitones from root), used for snapping + melody arpeggios
+    const moodHarmony = {
+      // I-V-vi-IV: the bright "four-chord" pop progression
+      happy:  { prog: [[0,4,7],[7,11,14],[9,12,16],[5,9,12]],      SI: [0,2,4,5,7,9,11] },
+      // i-VI-III-VII: natural minor, the sad pop ballad progression
+      sad:    { prog: [[0,3,7],[8,12,15],[3,7,10],[10,14,17]],      SI: [0,2,3,5,7,8,10] },
+      // Imaj7-vi7-IVmaj7-V7: jazz turnaround, warm and sophisticated
+      chill:  { prog: [[0,4,7,11],[9,12,16,19],[5,9,12,16],[7,11,14,17]], SI: [0,2,4,5,7,9,11] },
+      // i-bII-V-i: phrygian flat-two + harmonic minor V, classic horror tension
+      spooky: { prog: [[0,3,7],[1,5,8],[7,11,14],[0,3,7]],          SI: [0,2,3,5,7,8,11] },
+      // sus4→I, IVadd9, Vsus2: unresolved suspensions over pentatonic, playful and off-kilter
+      silly:  { prog: [[0,5,7],[0,4,7],[5,9,14],[7,12,14]],         SI: [0,2,4,7,9] },
+      // i-bVI-bVII-i: cinematic minor over dorian scale, sweeping and powerful
+      epic:   { prog: [[0,3,7],[8,12,15],[10,14,17],[0,3,7]],       SI: [0,2,3,5,7,9,10] },
+    };
+    const { prog, SI } = moodHarmony[mood] ?? moodHarmony.happy;
+
     const NI = { C:0,'C#':1,D:2,'D#':3,E:4,F:5,'F#':6,G:7,'G#':8,A:9,'A#':10,B:11 };
     const rootPc = NI[analysis.key] ?? 0;
     const scalePcs = SI.map(v => (v + rootPc) % 12);
@@ -197,7 +213,15 @@ class BackingTrackGenerator {
     }
     if (!melodyMotif) {
       const pitches = SI.map(v => Tone.Frequency(rootPc + v + 60, 'midi').toNote());
-      const pats = { spooky:[0,2,1,0,2,4,3,1], sad:[0,1,2,1,0,2,1,0], chill:[0,2,4,2,0,4,2,0], epic:[0,4,6,2,4,6,2,0], happy:[0,2,4,2,4,5,4,2], silly:[0,4,2,5,4,2,5,4] };
+      // Melodic contours tuned to each mood's scale and character
+      const pats = {
+        happy:  [0,2,4,2,4,5,4,2],  // ascending brightness
+        sad:    [0,1,2,1,0,2,1,0],  // drooping minor steps
+        chill:  [0,2,4,3,4,2,4,2],  // lazy jazz swing
+        spooky: [0,2,1,0,3,2,1,3],  // unsettling chromatic creep
+        silly:  [0,3,1,4,2,4,0,3],  // jumpy, unpredictable leaps
+        epic:   [0,4,6,2,4,6,4,2],  // sweeping dorian ascent
+      };
       melodyMotif = (pats[mood] || pats.happy).map((idx, i) => ({ time: i * eighthSec, note: pitches[idx % pitches.length] }));
     }
 
@@ -425,7 +449,7 @@ function computePitchSchedule(pitchContour, key, scale) {
   const noteIndex = { C:0,'C#':1,D:2,'D#':3,E:4,F:5,'F#':6,G:7,'G#':8,A:9,'A#':10,B:11 };
   const root = noteIndex[key] ?? 0;
   const scalePcs = (scaleIntervals[scale] ?? scaleIntervals.major).map(v => (v + root) % 12);
-  const raw = (pitchContour || []).filter(p => p.confidence >= 0.25).map(p => {
+  const raw = (pitchContour || []).filter(p => p.confidence >= 0.2).map(p => {
     const pc = ((p.midi % 12) + 12) % 12;
     let bestPc = scalePcs[0], bestDist = 12;
     for (const sp of scalePcs) {
