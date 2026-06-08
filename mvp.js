@@ -500,6 +500,26 @@ class BackingTrackGenerator {
       return 'chorus';
     };
 
+    // Voice-activity map — which eighth-note slots in the bar have singing
+    // (slot 0–7 = 8 eighth-note positions). Melody avoids these to leave space for vocals.
+    const voiceActiveSlots = new Set();
+    (analysis.pitchContour || []).filter(p => p.confidence >= 0.3).forEach(p => {
+      const slot = Math.round(((p.time % secPerBar) / secPerBar) * 8) % 8;
+      voiceActiveSlots.add(slot);
+    });
+    const melodySlotActive = (noteTime) => voiceActiveSlots.has(Math.round((noteTime / secPerBar) * 8) % 8);
+
+    // Phrase pattern: which bar in each 4-bar group plays A, B, or rests.
+    // Chosen by arrangeSeed so each generation has a distinct structural feel.
+    const phrasePatterns = [
+      ['A','A','B',null],   // classic call-response
+      ['A',null,'B','A'],   // sparse, open feel
+      ['A','A','A','B'],    // tension builds to delayed answer
+      [null,'A','B','A'],   // silent-start, late entry
+      ['A','B','A',null],   // early answer, ends open
+    ];
+    const phrasePattern = phrasePatterns[arrangeSeed % phrasePatterns.length];
+
     // Humanization helpers — add subtle timing/velocity variation at non-zero humanize
     const hTime = humanize > 0
       ? (t) => t + (Math.random() - 0.5) * humanize * 0.025  // ±12.5ms at 100%
@@ -611,19 +631,15 @@ class BackingTrackGenerator {
         sched('bass', { note:bassNote2, duration:'8n', velocity:bv2 }, (time) => bass.triggerAttackRelease(bassNote2, '8n', time, bv2), hTime(t + secPerBar * 0.5));
       }
 
-      // Melody — A/B call-and-response; absent in intro and outro
+      // Melody — phrase pattern + voice-aware gaps; absent in intro and outro
       if (!isIntro && !isOutro) {
-        const useAPhrase = bar % 4 < 2;     // bars 0,1 of each 4-bar group: full A motif
-        const useBPhrase = bar % 4 >= 2;    // bars 2,3: B answer phrase
-        if (useAPhrase) {
-          melodyMotif.forEach(m => {
-            const mv = hVel(0.55), dur = m.duration || '8n';
-            sched('melody', { note:m.note, duration:dur, velocity:mv }, (time) => melody.triggerAttackRelease(m.note, dur, time, mv), hTime(t + m.time));
-          });
-        }
-        if (useBPhrase && bMotif.length) {
-          bMotif.forEach(m => {
-            const mv = hVel(0.48), dur = m.duration || '8n';
+        const phraseType = phrasePattern[bar % 4];
+        const playMotif = phraseType === 'A' ? melodyMotif : phraseType === 'B' ? bMotif : null;
+        if (playMotif) {
+          playMotif.forEach(m => {
+            // Leave space where the voice was singing — fills the gaps naturally
+            if (melodySlotActive(m.time)) return;
+            const mv = hVel(phraseType === 'A' ? 0.55 : 0.48), dur = m.duration || '8n';
             sched('melody', { note:m.note, duration:dur, velocity:mv }, (time) => melody.triggerAttackRelease(m.note, dur, time, mv), hTime(t + m.time));
           });
         }
@@ -885,26 +901,46 @@ class TrackView {
 // ── MasterTimeline ────────────────────────────────────────────────────────────
 
 class MasterTimeline {
-  constructor(el) { this._el = el; this._loops = []; this._nextId = 1; this._dragId = null; this._playing = false; }
+  constructor(el) {
+    this._el = el; this._loops = []; this._nextId = 1; this._dragId = null;
+    this._playing = false; this._vocalPlayers = [];
+  }
 
-  add(label, snap) {
-    this._loops.push({ id: `loop-${this._nextId++}`, label, snap });
+  add(label, snap, vocalUrl) {
+    this._loops.push({ id: `loop-${this._nextId++}`, label, snap, vocalUrl: vocalUrl || null });
     this._render();
   }
 
   duplicate(loopId) {
     const src = this._loops.find(l => l.id === loopId);
     if (!src) return;
-    this._loops.push({ id: `loop-${this._nextId++}`, label: src.label + ' (copy)', snap: JSON.parse(JSON.stringify(src.snap)) });
+    this._loops.push({ id: `loop-${this._nextId++}`, label: src.label + ' (copy)',
+      snap: JSON.parse(JSON.stringify(src.snap)), vocalUrl: src.vocalUrl });
     this._render();
   }
 
-  play(result) {
+  async play(result) {
     if (!this._loops.length) return;
     Tone.Transport.stop();
     Tone.Transport.cancel();
+    this._disposeVocalPlayers();
     const s = result?.synths ?? {};
     let offset = 0;
+
+    // Build vocal players for each loop that has a voice recording
+    for (const loop of this._loops) {
+      if (loop.vocalUrl) {
+        const p = new Tone.Player(loop.vocalUrl);
+        this._vocalPlayers.push({ p, offset });
+      }
+      offset += loop.snap.totalSec;
+    }
+    if (this._vocalPlayers.length) {
+      try { await Tone.loaded(); } catch {}
+    }
+
+    // Schedule backing note events
+    offset = 0;
     for (const loop of this._loops) {
       const { tracks, totalSec, effectiveBpm } = loop.snap;
       Tone.Transport.bpm.value = effectiveBpm;
@@ -913,30 +949,40 @@ class MasterTimeline {
           const t = offset + ev.time;
           const dur = ev.duration || '8n';
           const vel = ev.velocity || 0.5;
-          if (tid === 'melody' && s.melody)
-            Tone.Transport.schedule((time) => s.melody.triggerAttackRelease(ev.note, dur, time, vel), t);
-          else if (tid === 'bass' && s.bass)
-            Tone.Transport.schedule((time) => s.bass.triggerAttackRelease(ev.note, dur, time, vel), t);
-          else if (tid === 'chords' && s.poly) {
-            const notes = ev.notes ?? (ev.note ? [ev.note] : []);
-            if (notes.length) Tone.Transport.schedule((time) => s.poly.triggerAttackRelease(notes, dur, time, vel), t);
-          } else if (tid === 'kick' && s.drum)
-            Tone.Transport.schedule((time) => s.drum.triggerAttackRelease('C1', dur, time, vel), t);
-          else if (tid === 'snare' && s.snare)
-            Tone.Transport.schedule((time) => s.snare.triggerAttackRelease(dur, time, vel), t);
-          else if (tid === 'hat' && s.hat)
-            Tone.Transport.schedule((time) => s.hat.triggerAttackRelease(dur, time, vel), t);
+          if      (tid === 'melody' && s.melody)  Tone.Transport.schedule((time) => s.melody.triggerAttackRelease(ev.note, dur, time, vel), t);
+          else if (tid === 'bass'   && s.bass)    Tone.Transport.schedule((time) => s.bass.triggerAttackRelease(ev.note, dur, time, vel), t);
+          else if (tid === 'chords' && s.poly)  { const n = ev.notes ?? (ev.note ? [ev.note] : []); if (n.length) Tone.Transport.schedule((time) => s.poly.triggerAttackRelease(n, dur, time, vel), t); }
+          else if (tid === 'kick'   && s.drum)    Tone.Transport.schedule((time) => s.drum.triggerAttackRelease('C1', dur, time, vel), t);
+          else if (tid === 'snare'  && s.snare)   Tone.Transport.schedule((time) => s.snare.triggerAttackRelease(dur, time, vel), t);
+          else if (tid === 'hat'    && s.hat)     Tone.Transport.schedule((time) => s.hat.triggerAttackRelease(dur, time, vel), t);
         }
       }
       offset += totalSec;
     }
-    Tone.Transport.schedule(() => { Tone.Transport.stop(); this._playing = false; this._updatePlayBtn(); }, offset);
+
+    // Schedule vocals at their respective offsets
+    for (const { p, offset: o } of this._vocalPlayers) {
+      p.connect(Tone.Destination);
+      Tone.Transport.schedule((time) => p.start(time), o);
+    }
+
+    Tone.Transport.schedule(() => { Tone.Transport.stop(); this._playing = false; this._updatePlayBtn(); this._disposeVocalPlayers(); }, offset);
     Tone.Transport.start();
     this._playing = true;
     this._updatePlayBtn();
   }
 
-  stop() { Tone.Transport.stop(); this._playing = false; this._updatePlayBtn(); }
+  stop() {
+    Tone.Transport.stop();
+    this._playing = false;
+    this._updatePlayBtn();
+    this._disposeVocalPlayers();
+  }
+
+  _disposeVocalPlayers() {
+    for (const { p } of this._vocalPlayers) { try { p.dispose(); } catch {} }
+    this._vocalPlayers = [];
+  }
 
   _updatePlayBtn() {
     const btn = document.getElementById('playTimelineBtn');
@@ -1327,7 +1373,7 @@ document.getElementById('addToTimelineBtn').onclick = () => {
   const mood = moodSelect.value !== 'Auto' ? moodSelect.value : (analysis?.mood ?? 'loop');
   const style = styleSelect.value !== 'Auto' ? styleSelect.value : '';
   const label = `Loop ${loopCounter++} · ${mood}${style ? ' · ' + style : ''}`;
-  masterTimeline.add(label, snap);
+  masterTimeline.add(label, snap, vocalUrl);
   document.getElementById('timeline-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
 };
 
