@@ -528,6 +528,8 @@ class TrackView {
     // Global handlers for drag-to-pitch (attached once, check _drag guard)
     document.addEventListener('mousemove', (e) => this._onDragMove(e));
     document.addEventListener('mouseup',   (e) => this._onDragEnd(e));
+    document.addEventListener('touchmove', (e) => { if (this._drag) { e.preventDefault(); this._onDragMove(e); } }, { passive: false });
+    document.addEventListener('touchend',  (e) => this._onDragEnd(e));
   }
 
   setData(result) {
@@ -578,16 +580,29 @@ class TrackView {
         if (def.pitched) this._onPitchDragStart(e, cv, events, def, totalSec, scalePcs, bpm);
         else             this._onDrumClick(e, cv, events, def, totalSec, bpm);
       });
+      cv.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        if (def.pitched) this._onPitchDragStart(e, cv, events, def, totalSec, scalePcs, bpm);
+        else             this._onDrumClick(e, cv, events, def, totalSec, bpm);
+      }, { passive: false });
     });
     return lane;
+  }
+
+  // ── Coordinate normalizer (mouse + touch) ────────────────────────────────
+
+  _getCoords(e) {
+    const t = e.touches?.[0] ?? e.changedTouches?.[0];
+    return t ? { clientX: t.clientX, clientY: t.clientY } : { clientX: e.clientX, clientY: e.clientY };
   }
 
   // ── Pitched note drag ─────────────────────────────────────────────────────
 
   _onPitchDragStart(e, cv, events, def, totalSec, scalePcs, bpm) {
     e.preventDefault();
+    const { clientX, clientY } = this._getCoords(e);
     const rect = cv.getBoundingClientRect();
-    const clickT = ((e.clientX - rect.left) / rect.width) * totalSec;
+    const clickT = ((clientX - rect.left) / rect.width) * totalSec;
     let best = null, bestD = Infinity;
     for (const ev of events) { const d = Math.abs(ev.time - clickT); if (d < bestD) { bestD = d; best = ev; } }
     if (!best || bestD > (60 / bpm) * 0.5) return;
@@ -600,14 +615,15 @@ class TrackView {
     const origMidi = Tone.Frequency(best.note ?? (best.notes?.[0])).toMidi();
 
     this._drag = { ev: best, events, def, cv, totalSec, scalePcs, bpm,
-                   origMidi, origY: e.clientY, mRange, canvasH: cv.height };
+                   origMidi, origY: clientY, mRange, canvasH: cv.height };
   }
 
   _onDragMove(e) {
     if (!this._drag) return;
+    const { clientY } = this._getCoords(e);
     const { ev, events, def, cv, totalSec, scalePcs, bpm, origMidi, origY, mRange, canvasH } = this._drag;
     const pxPerSemitone = Math.max(1, (canvasH - 8) / mRange);
-    const deltaY   = origY - e.clientY;          // up = positive = higher pitch
+    const deltaY   = origY - clientY;            // up = positive = higher pitch
     const rawMidi  = origMidi + Math.round(deltaY / pxPerSemitone);
     const newNote  = this._snapToScale(rawMidi, scalePcs);
     if (newNote === (ev.note ?? ev.notes?.[0])) return;
@@ -648,8 +664,9 @@ class TrackView {
   // ── Drum toggle ───────────────────────────────────────────────────────────
 
   _onDrumClick(e, cv, events, def, totalSec, bpm) {
+    const { clientX } = this._getCoords(e);
     const rect = cv.getBoundingClientRect();
-    const clickT = ((e.clientX - rect.left) / rect.width) * totalSec;
+    const clickT = ((clientX - rect.left) / rect.width) * totalSec;
     const thr = (60 / bpm) * 0.15;
     const idx = events.findIndex(ev => Math.abs(ev.time - clickT) < thr);
     if (idx >= 0) {
