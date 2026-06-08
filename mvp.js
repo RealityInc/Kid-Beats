@@ -87,6 +87,7 @@ class BackingTrackGenerator {
     const isCountry = style === 'country';
     const is4OnFloor = style === 'dance';
     const isHipHop = style === 'hip-hop';
+    const isElectro = style === 'weird electro';
     const moodBpmRange = { spooky:[50,95], sad:[50,90], chill:[55,100], silly:[75,130], happy:[85,135], epic:[110,165] };
     const [bpmMin, bpmMax] = moodBpmRange[mood] ?? [80, 120];
     const effectiveBpm = Math.max(bpmMin, Math.min(bpmMax, analysis.bpm));
@@ -97,25 +98,81 @@ class BackingTrackGenerator {
     const bars = Math.ceil(target / secPerBar);
     const totalSec = bars * secPerBar;
 
-    const drum = new Tone.MembraneSynth();
-    const snare = new Tone.NoiseSynth({ envelope: { attack: 0.001, decay: 0.13, sustain: 0 } });
-    const hat = new Tone.NoiseSynth({ envelope: { attack: 0.001, decay: 0.05, sustain: 0 } });
-    const bass = new Tone.Synth({ oscillator: { type: 'triangle' } });
-    const poly = new Tone.PolySynth(Tone.Synth);
-    const melody = new Tone.Synth({ oscillator: { type: 'triangle' }, envelope: { attack: 0.02, decay: 0.2, sustain: 0.5, release: 0.3 } });
-    const reverb = new Tone.Reverb({ decay: 2.5, wet: 0.2 });
-    const delay = new Tone.PingPongDelay('8n', 0.15);
+    // Kick — genre-specific punch and decay
+    const drum = new Tone.MembraneSynth(isHipHop
+      ? { pitchDecay: 0.18, octaves: 9, envelope: { attack: 0.001, decay: 0.6, sustain: 0 } }
+      : isRock
+      ? { pitchDecay: 0.06, octaves: 5, envelope: { attack: 0.001, decay: 0.2, sustain: 0 } }
+      : { pitchDecay: 0.05, octaves: 4 });
+
+    // Snare — white noise for rock punch, pink for others
+    const snare = new Tone.NoiseSynth({ noise: { type: isRock ? 'white' : 'pink' }, envelope: { attack: 0.001, decay: isRock ? 0.09 : 0.13, sustain: 0 } });
+    const hat = new Tone.NoiseSynth({ noise: { type: 'white' }, envelope: { attack: 0.001, decay: 0.05, sustain: 0 } });
+
+    // Bass oscillator — sine for hip-hop warmth, saw for rock/electro edge, square for dance, triangle default
+    const bassOsc = isHipHop ? 'sine' : (isRock || isElectro) ? 'sawtooth' : is4OnFloor ? 'square' : 'triangle';
+    const bass = new Tone.Synth({ oscillator: { type: bassOsc }, envelope: { attack: 0.01, decay: 0.3, sustain: 0.6, release: 0.4 } });
+
+    // Chords — slow attack for atmospheric moods, sawtooth edge for rock
+    const chordAtk = mood === 'spooky' ? 2.0 : (mood === 'chill' || mood === 'sad') ? 1.0 : 0.04;
+    const chordOsc = (mood === 'spooky' || mood === 'chill' || mood === 'sad') ? 'sine' : isRock ? 'sawtooth' : 'triangle';
+    const poly = new Tone.PolySynth(Tone.Synth, { oscillator: { type: chordOsc }, envelope: { attack: chordAtk, decay: 0.4, sustain: 0.7, release: 1.2 } });
+
+    // Melody — sawtooth for rock/electro bite, sine for sad/spooky softness, triangle default
+    const melOsc = (isRock || isElectro) ? 'sawtooth' : (mood === 'spooky' || mood === 'sad') ? 'sine' : 'triangle';
+    const melody = new Tone.Synth({ oscillator: { type: melOsc }, envelope: { attack: 0.02, decay: 0.2, sustain: 0.5, release: 0.3 } });
+
+    // Atmospheric pad — lush long notes for spooky/chill/sad/epic
+    const usePad = ['spooky', 'chill', 'sad', 'epic'].includes(mood);
+    const pad = usePad ? new Tone.PolySynth(Tone.AMSynth, { harmonicity: mood === 'spooky' ? 2.0 : 1.5, envelope: { attack: mood === 'spooky' ? 2.5 : 1.5, decay: 1.0, sustain: 0.8, release: 2.5 } }) : null;
+
+    // Arp synth — 8th-note chord arpeggios for dance/electro/happy/silly
+    const useArp = (is4OnFloor || isElectro || mood === 'happy' || mood === 'silly') && !isCountry && !isRock;
+    const arp = useArp ? new Tone.Synth({ oscillator: { type: isElectro ? 'sawtooth' : 'square' }, envelope: { attack: 0.005, decay: 0.1, sustain: 0.15, release: 0.08 } }) : null;
+
+    // Open-hat shimmer — metallic sustain for spooky/chill/sad breathing space
+    const useOpenHat = ['spooky', 'chill', 'sad'].includes(mood);
+    const openHat = useOpenHat ? new Tone.MetalSynth({ frequency: 400, envelope: { attack: 0.001, decay: 0.9, release: 0.5 }, resonance: 4000, harmonicity: 5.1, modulationIndex: 32, octaves: 1.5 }) : null;
+
+    // Effects — reverb and delay scale with mood atmosphere
+    const reverbDecay = mood === 'spooky' ? 5.0 : mood === 'chill' ? 3.0 : mood === 'sad' ? 2.5 : 1.5;
+    const reverbWet = mood === 'spooky' ? 0.45 : mood === 'chill' ? 0.3 : mood === 'sad' ? 0.22 : 0.15;
+    const reverb = new Tone.Reverb({ decay: reverbDecay, wet: reverbWet });
+    const delay = new Tone.PingPongDelay('8n', (mood === 'spooky' || mood === 'sad') ? 0.22 : 0.12);
     const limiter = new Tone.Limiter(-1).toDestination();
-    const bus = new Tone.Gain(0.9).chain(reverb, delay, limiter);
-    [hat, snare, bass, poly, melody].forEach((i) => i.connect(bus));
-    drum.connect(limiter);
+    const bus = new Tone.Gain(0.85).chain(reverb, delay, limiter);
+
+    // Melody vibrato — gentle pitch wobble for spooky/sad expressiveness
+    const vibrato = (mood === 'spooky' || mood === 'sad') ? new Tone.Vibrato({ frequency: 4.5, depth: 0.15 }) : null;
+    if (vibrato) { melody.chain(vibrato, bus); } else { melody.connect(bus); }
+
+    // Distortion — grit for rock (shared across poly + bass into bus)
+    const dist = isRock ? new Tone.Distortion(0.35) : null;
+    if (dist) { poly.connect(dist); bass.connect(dist); dist.connect(bus); } else { poly.connect(bus); bass.connect(bus); }
+
+    hat.connect(bus); snare.connect(bus); drum.connect(limiter);
+
+    // Pad routes through an extra lush reverb for depth
+    const padReverb = usePad ? new Tone.Reverb({ decay: 6.0, wet: 0.55 }) : null;
+    const padGain = usePad ? new Tone.Gain(0.28).chain(padReverb, limiter) : null;
+    if (pad && padGain) pad.connect(padGain);
+    if (arp) arp.connect(bus);
+    if (openHat) openHat.connect(bus);
+
     this._nodes = [drum, snare, hat, bass, poly, melody, reverb, delay, limiter, bus];
+    if (vibrato) this._nodes.push(vibrato);
+    if (dist) this._nodes.push(dist);
+    if (pad) this._nodes.push(pad);
+    if (padReverb) this._nodes.push(padReverb);
+    if (padGain) this._nodes.push(padGain);
+    if (arp) this._nodes.push(arp);
+    if (openHat) this._nodes.push(openHat);
 
     const rootMap = { C:'C2','C#':'C#2',D:'D2','D#':'D#2',E:'E2',F:'F2','F#':'F#2',G:'G2','G#':'G#2',A:'A2','A#':'A#2',B:'B2' };
     const root = rootMap[analysis.key] || 'C2';
     const prog = analysis.scale === 'minor' ? [[0,3,7],[5,8,12],[7,10,14],[3,7,10]] : [[0,4,7],[5,9,12],[7,11,14],[0,5,9]];
 
-    // Build melody motif from pitch contour, snapped to detected scale
+    // Melody motif from pitch contour, snapped to detected scale
     const SI = analysis.scale === 'minor' ? [0,2,3,5,7,8,10] : [0,2,4,5,7,9,11];
     const NI = { C:0,'C#':1,D:2,'D#':3,E:4,F:5,'F#':6,G:7,'G#':8,A:9,'A#':10,B:11 };
     const rootPc = NI[analysis.key] ?? 0;
@@ -139,13 +196,12 @@ class BackingTrackGenerator {
       if (candidates.length >= 3) { melodyMotif = candidates.map(m => ({ time: m.slot * eighthSec, note: m.note })); melodySource = 'pitchContour'; }
     }
     if (!melodyMotif) {
-      // Fallback: mood-specific scale arpeggio
       const pitches = SI.map(v => Tone.Frequency(rootPc + v + 60, 'midi').toNote());
       const pats = { spooky:[0,2,1,0,2,4,3,1], sad:[0,1,2,1,0,2,1,0], chill:[0,2,4,2,0,4,2,0], epic:[0,4,6,2,4,6,2,0], happy:[0,2,4,2,4,5,4,2], silly:[0,4,2,5,4,2,5,4] };
       melodyMotif = (pats[mood] || pats.happy).map((idx, i) => ({ time: i * eighthSec, note: pitches[idx % pitches.length] }));
     }
 
-    // Drum patterns driven directly by detected BPM
+    // Drum patterns
     const phraseEnergies = analysis.phrases.map(p => p.energy);
     const avgEnergy = phraseEnergies.reduce((a, v) => a + v, 0) / Math.max(1, phraseEnergies.length);
     const isHalfTime = effectiveBpm < 85 || mood === 'spooky' || mood === 'sad';
@@ -161,7 +217,6 @@ class BackingTrackGenerator {
     const hatDiv = isDoubletime ? 8 : effectiveBpm > 95 ? 4 : 2;
     const kickSet = new Set(kickBeats.map(f => Math.round(f * 1000)));
     const hatBeats = Array.from({ length: hatDiv }, (_, i) => i / hatDiv).filter(f => !kickSet.has(Math.round(f * 1000)));
-    const chordDur = isHipHop ? '4n' : isCountry ? '8n' : `${secPerBar}s`;
 
     for (let bar = 0; bar < bars; bar++) {
       const t = bar * secPerBar;
@@ -169,20 +224,68 @@ class BackingTrackGenerator {
       const dynVel = Math.max(0.25, Math.min(1.0, barE / Math.max(avgEnergy * 1.2, 0.001)));
       const chord = prog[bar % prog.length].map((n) => Tone.Frequency(root).transpose(n).toNote());
 
-      kickBeats.forEach(f => Tone.Transport.schedule((time) => drum.triggerAttackRelease('C1', '8n', time, 0.65 + dynVel * 0.3), t + secPerBar * f));
+      kickBeats.forEach(f => Tone.Transport.schedule((time) => drum.triggerAttackRelease('C1', isHipHop ? '4n' : '8n', time, 0.65 + dynVel * 0.3), t + secPerBar * f));
       snareBeats.forEach(f => Tone.Transport.schedule((time) => snare.triggerAttackRelease('8n', time, 0.25 + dynVel * 0.2), t + secPerBar * f));
       hatBeats.forEach(f => Tone.Transport.schedule((time) => hat.triggerAttackRelease('16n', time, 0.08 + dynVel * 0.15), t + secPerBar * f));
-      Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord, chordDur, time, 0.35), t);
-      if (isHipHop) Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord, '8n', time, 0.25), t + secPerBar * 0.375);
-      if (isCountry) {
-        Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord.slice(0, 2), '16n', time, 0.3), t + secPerBar * 0.25);
-        Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord.slice(0, 2), '16n', time, 0.3), t + secPerBar * 0.75);
+
+      // Chords — genre-specific patterns
+      if (isHipHop) {
+        Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord, '4n', time, 0.3), t);
+        Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord, '8n', time, 0.22), t + secPerBar * 0.375);
+      } else if (isCountry) {
+        // Boom-chick: chord strums on beats 2 and 4
+        Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord.slice(0, 2), '8n', time, 0.32), t + secPerBar * 0.25);
+        Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord.slice(0, 2), '8n', time, 0.32), t + secPerBar * 0.75);
+      } else if (isRock) {
+        // Punchy stabs on every beat
+        [0, 0.25, 0.5, 0.75].forEach(f => Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord, '16n', time, 0.38), t + secPerBar * f));
+      } else if (mood === 'epic') {
+        // Epic: sustained hits every half bar
+        Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord, `${secPerBar * 0.45}s`, time, 0.4), t);
+        Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord, `${secPerBar * 0.45}s`, time, 0.35), t + secPerBar * 0.5);
+      } else {
+        Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord, `${secPerBar * 0.95}s`, time, 0.35), t);
       }
-      Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[0], '8n', time + secPerBar * 0.01, 0.6), t);
-      Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[2], '8n', time + secPerBar * 0.5, 0.45), t);
-      if (isHipHop) Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[0], '16n', time, 0.4), t + secPerBar * 0.375);
+
+      // Bass — genre-specific patterns
+      if (isRock) {
+        // Driving 8th notes
+        [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875].forEach(f =>
+          Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[0], '16n', time, 0.5 + dynVel * 0.15), t + secPerBar * f));
+      } else if (isCountry) {
+        // Boom-chick bass: root on 1 and 3, 5th on 2 and 4
+        Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[0], '8n', time, 0.65), t);
+        Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[2] || chord[0], '8n', time, 0.55), t + secPerBar * 0.5);
+      } else if (isHipHop) {
+        // Long root + syncopated hit
+        Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[0], `${secPerBar * 0.35}s`, time, 0.6), t);
+        Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[0], '16n', time, 0.4), t + secPerBar * 0.375);
+      } else {
+        Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[0], '8n', time + secPerBar * 0.01, 0.6), t);
+        Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[2], '8n', time + secPerBar * 0.5, 0.45), t);
+      }
 
       melodyMotif.forEach(m => Tone.Transport.schedule((time) => melody.triggerAttackRelease(m.note, '8n', time, 0.55), t + m.time));
+
+      // Atmospheric pad — sustained chord tones every 2 bars
+      if (usePad && pad && bar % 2 === 0) {
+        const padNotes = chord.slice(0, 2).map(n => Tone.Frequency(n).transpose(12).toNote());
+        Tone.Transport.schedule((time) => pad.triggerAttackRelease(padNotes, `${secPerBar * 1.9}s`, time, 0.25), t);
+      }
+
+      // Arp — ascending chord tones for energetic moods
+      if (useArp && arp) {
+        const arpBase = chord.map(n => Tone.Frequency(n).transpose(12).toNote());
+        const arpExt = [...arpBase, ...arpBase.map(n => Tone.Frequency(n).transpose(12).toNote())];
+        for (let i = 0; i < 8; i++) {
+          Tone.Transport.schedule((time) => arp.triggerAttackRelease(arpExt[i % arpExt.length], '16n', time, 0.28 + dynVel * 0.12), t + i * eighthSec);
+        }
+      }
+
+      // Open-hat shimmer — metallic breath on odd bars, beat 3.5
+      if (useOpenHat && openHat && bar % 2 === 1) {
+        Tone.Transport.schedule((time) => openHat.triggerAttackRelease('16n', time, 0.14), t + secPerBar * 0.75);
+      }
     }
     Tone.Transport.swing = isHipHop ? 0.2 : (is4OnFloor || isRock) ? 0.02 : isCountry ? 0.06 : 0.08;
     Tone.Transport.schedule(() => Tone.Transport.stop(), totalSec);
@@ -243,9 +346,12 @@ class PlaybackEngine {
   }
   async playBacking() { await Tone.start(); this.stop(); Tone.Transport.position = 0; Tone.Transport.start(); }
   async playTogether() {
-    this.stop(); this.voice.currentTime = 0; Tone.Transport.position = 0;
-    // Call play() synchronously before any await so iOS gesture context is preserved
-    const voicePlay = this.voice.play();
+    this.stop();
+    this._ensureAudioChain(); // wire _voiceWA through Web Audio chain (idempotent)
+    this._voiceWA.currentTime = 0;
+    Tone.Transport.position = 0;
+    // Call _voiceWA.play() synchronously before any await so iOS gesture context is preserved
+    const voicePlay = this._voiceWA.play();
     await Tone.start(); Tone.Transport.start();
     try { await voicePlay; } catch(e) {}
     this._startPitchTracking();
