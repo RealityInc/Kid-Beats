@@ -269,14 +269,20 @@ class BackingTrackGenerator {
 
     // Melody vibrato — gentle pitch wobble for spooky/sad expressiveness
     const vibrato = (mood === 'spooky' || mood === 'sad') ? new Tone.Vibrato({ frequency: 4.5, depth: 0.15 }) : null;
-    if (vibrato) { melody.chain(melCh, vibrato, bus); } else { melody.chain(melCh, bus); }
+    // Use explicit connect() throughout — chain() on shared nodes (percCh) would
+    // register percCh→bus twice in Tone.js's internal graph, causing silent failure.
+    melody.connect(melCh);
+    if (vibrato) { melCh.connect(vibrato); vibrato.connect(bus); } else { melCh.connect(bus); }
 
     // Distortion — grit for rock (shared across poly + bass into bus)
     const dist = isRock ? new Tone.Distortion(0.35) : null;
-    if (dist) { poly.chain(chordsCh, dist); bass.chain(bassCh, dist); dist.connect(bus); }
-    else      { poly.chain(chordsCh, bus);  bass.chain(bassCh, bus); }
+    poly.connect(chordsCh); bass.connect(bassCh);
+    if (dist) { chordsCh.connect(dist); bassCh.connect(dist); dist.connect(bus); }
+    else      { chordsCh.connect(bus);  bassCh.connect(bus); }
 
-    hat.chain(percCh, bus); snare.chain(percCh, bus); drum.chain(kickCh, limiter);
+    // Snare + hat share percCh — connect each source separately, bus once
+    hat.connect(percCh); snare.connect(percCh); percCh.connect(bus);
+    drum.connect(kickCh); kickCh.connect(limiter);
 
     // Pad routes through an extra lush reverb for depth
     const padReverb = usePad ? new Tone.Reverb({ decay: 6.0, wet: 0.55 }) : null;
@@ -517,10 +523,16 @@ function drawTrackCanvas(cv, events, def, totalSec, bpm) {
 // ── TrackView ────────────────────────────────────────────────────────────────
 
 class TrackView {
-  constructor(el) { this._el = el; this._result = null; this._muted = {}; }
+  constructor(el) {
+    this._el = el; this._result = null; this._muted = {}; this._drag = null;
+    // Global handlers for drag-to-pitch (attached once, check _drag guard)
+    document.addEventListener('mousemove', (e) => this._onDragMove(e));
+    document.addEventListener('mouseup',   (e) => this._onDragEnd(e));
+  }
 
   setData(result) {
     this._result = result;
+    this._drag = null;
     this._muted = {};
     if (result?.channels) Object.values(result.channels).forEach(ch => { if (ch) ch.gain.value = 1; });
     this._render();
@@ -557,71 +569,95 @@ class TrackView {
     hdr.append(muteBtn, lbl);
     const cv = document.createElement('canvas');
     cv.className = 'track-canvas'; cv.height = def.pitched ? 52 : 24;
+    cv.style.cursor = def.pitched ? 'ns-resize' : 'pointer';
     lane.append(hdr, cv);
     requestAnimationFrame(() => {
       cv.width = cv.offsetWidth || 560;
       drawTrackCanvas(cv, events, def, totalSec, bpm);
-      cv.onclick = (e) => this._onCanvasClick(e, cv, events, def, totalSec, scalePcs, bpm);
+      cv.addEventListener('mousedown', (e) => {
+        if (def.pitched) this._onPitchDragStart(e, cv, events, def, totalSec, scalePcs, bpm);
+        else             this._onDrumClick(e, cv, events, def, totalSec, bpm);
+      });
     });
     return lane;
   }
 
-  _onCanvasClick(e, cv, events, def, totalSec, scalePcs, bpm) {
+  // ── Pitched note drag ─────────────────────────────────────────────────────
+
+  _onPitchDragStart(e, cv, events, def, totalSec, scalePcs, bpm) {
+    e.preventDefault();
     const rect = cv.getBoundingClientRect();
     const clickT = ((e.clientX - rect.left) / rect.width) * totalSec;
-    if (!def.pitched) {
-      // Drums: click to remove hit (nearest within 15% of a beat)
-      const thr = (60 / bpm) * 0.15;
-      const idx = events.findIndex(ev => Math.abs(ev.time - clickT) < thr);
-      if (idx >= 0) {
-        if (events[idx].evId !== undefined) Tone.Transport.clear(events[idx].evId);
-        events.splice(idx, 1);
-        cv.width = cv.offsetWidth || 560; drawTrackCanvas(cv, events, def, totalSec, bpm);
-      }
-      return;
-    }
     let best = null, bestD = Infinity;
     for (const ev of events) { const d = Math.abs(ev.time - clickT); if (d < bestD) { bestD = d; best = ev; } }
     if (!best || bestD > (60 / bpm) * 0.5) return;
-    this._showPitchPopup(e, cv, best, events, def, totalSec, scalePcs, bpm);
+
+    // Compute MIDI range from all events (same calc as drawTrackCanvas)
+    const allMidis = events.flatMap(ev => (ev.notes ?? (ev.note ? [ev.note] : []))
+      .map(n => { try { return Tone.Frequency(n).toMidi(); } catch { return NaN; } })).filter(m => !isNaN(m));
+    const minM = Math.min(...allMidis) - 2, maxM = Math.max(...allMidis) + 2;
+    const mRange = Math.max(1, maxM - minM);
+    const origMidi = Tone.Frequency(best.note ?? (best.notes?.[0])).toMidi();
+
+    this._drag = { ev: best, events, def, cv, totalSec, scalePcs, bpm,
+                   origMidi, origY: e.clientY, mRange, canvasH: cv.height };
   }
 
-  _showPitchPopup(e, cv, ev, events, def, totalSec, scalePcs, bpm) {
-    document.getElementById('note-popup')?.remove();
-    const popup = document.createElement('div');
-    popup.id = 'note-popup'; popup.className = 'note-popup';
+  _onDragMove(e) {
+    if (!this._drag) return;
+    const { ev, events, def, cv, totalSec, scalePcs, bpm, origMidi, origY, mRange, canvasH } = this._drag;
+    const pxPerSemitone = Math.max(1, (canvasH - 8) / mRange);
+    const deltaY   = origY - e.clientY;          // up = positive = higher pitch
+    const rawMidi  = origMidi + Math.round(deltaY / pxPerSemitone);
+    const newNote  = this._snapToScale(rawMidi, scalePcs);
+    if (newNote === (ev.note ?? ev.notes?.[0])) return;
+    ev.note = newNote;
+    if (ev.notes?.length) ev.notes[0] = newNote;
+    cv.width = cv.offsetWidth || 560;
+    drawTrackCanvas(cv, events, def, totalSec, bpm);
+  }
+
+  _onDragEnd(e) {
+    if (!this._drag) return;
+    const { ev, def, bpm } = this._drag;
+    // Reschedule with the final note
+    const synth = this._result?.synths?.[def.id];
+    if (synth && ev.evId !== undefined) {
+      Tone.Transport.clear(ev.evId);
+      const newId = Tone.Transport.schedule(
+        (time) => synth.triggerAttackRelease(ev.note, ev.duration || '8n', time, ev.velocity || 0.5),
+        ev.time
+      );
+      ev.evId = newId;
+    }
+    this._drag = null;
+  }
+
+  _snapToScale(targetMidi, scalePcs) {
     const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
-    const sel = document.createElement('select');
-    const currentNote = ev.note ?? (Array.isArray(ev.notes) ? ev.notes[0] : null);
-    for (const oct of [2, 3, 4, 5]) {
+    let bestMidi = 60, bestDist = Infinity;
+    for (let oct = 1; oct < 8; oct++) {
       for (const pc of (scalePcs || [])) {
-        const n = NOTE_NAMES[pc % 12] + oct;
-        const opt = document.createElement('option');
-        opt.value = n; opt.textContent = n;
-        if (n === currentNote) opt.selected = true;
-        sel.appendChild(opt);
+        const m = pc + oct * 12;
+        if (Math.abs(m - targetMidi) < bestDist) { bestDist = Math.abs(m - targetMidi); bestMidi = m; }
       }
     }
-    const synth = this._result?.synths?.[def.id];
-    sel.onchange = () => {
-      const newNote = sel.value;
-      if (ev.evId !== undefined) Tone.Transport.clear(ev.evId);
-      if (synth) {
-        const newId = Tone.Transport.schedule((time) => synth.triggerAttackRelease(newNote, ev.duration || '8n', time, ev.velocity || 0.5), ev.time);
-        ev.evId = newId;
-      }
-      ev.note = newNote;
-      if (ev.notes?.length) ev.notes[0] = newNote;
-      cv.width = cv.offsetWidth || 560; drawTrackCanvas(cv, events, def, totalSec, bpm);
-      popup.remove();
-    };
-    const closeBtn = document.createElement('button');
-    closeBtn.textContent = '✕'; closeBtn.onclick = () => popup.remove();
-    popup.append(sel, closeBtn);
-    popup.style.cssText = `position:fixed;left:${Math.min(e.clientX, window.innerWidth - 180)}px;top:${e.clientY - 10}px;`;
-    document.body.appendChild(popup);
-    const dismiss = (ev2) => { if (!popup.contains(ev2.target)) { popup.remove(); document.removeEventListener('click', dismiss); } };
-    setTimeout(() => document.addEventListener('click', dismiss), 60);
+    return NOTE_NAMES[bestMidi % 12] + (Math.floor(bestMidi / 12) - 1);
+  }
+
+  // ── Drum toggle ───────────────────────────────────────────────────────────
+
+  _onDrumClick(e, cv, events, def, totalSec, bpm) {
+    const rect = cv.getBoundingClientRect();
+    const clickT = ((e.clientX - rect.left) / rect.width) * totalSec;
+    const thr = (60 / bpm) * 0.15;
+    const idx = events.findIndex(ev => Math.abs(ev.time - clickT) < thr);
+    if (idx >= 0) {
+      if (events[idx].evId !== undefined) Tone.Transport.clear(events[idx].evId);
+      events.splice(idx, 1);
+      cv.width = cv.offsetWidth || 560;
+      drawTrackCanvas(cv, events, def, totalSec, bpm);
+    }
   }
 
   snapshot() {
