@@ -170,10 +170,11 @@ class BackingTrackGenerator {
 
     const rootMap = { C:'C2','C#':'C#2',D:'D2','D#':'D#2',E:'E2',F:'F2','F#':'F#2',G:'G2','G#':'G#2',A:'A2','A#':'A#2',B:'B2' };
     const root = rootMap[analysis.key] || 'C2';
-    const prog = analysis.scale === 'minor' ? [[0,3,7],[5,8,12],[7,10,14],[3,7,10]] : [[0,4,7],[5,9,12],[7,11,14],[0,5,9]];
+    const useMinor = scaleForMood(mood) === 'minor'; // driven by mood, not just analysis
+    const prog = useMinor ? [[0,3,7],[5,8,12],[7,10,14],[3,7,10]] : [[0,4,7],[5,9,12],[7,11,14],[0,5,9]];
 
-    // Melody motif from pitch contour, snapped to detected scale
-    const SI = analysis.scale === 'minor' ? [0,2,3,5,7,8,10] : [0,2,4,5,7,9,11];
+    // Melody motif from pitch contour, snapped to mood-appropriate scale
+    const SI = useMinor ? [0,2,3,5,7,8,10] : [0,2,4,5,7,9,11];
     const NI = { C:0,'C#':1,D:2,'D#':3,E:4,F:5,'F#':6,G:7,'G#':8,A:9,'A#':10,B:11 };
     const rootPc = NI[analysis.key] ?? 0;
     const scalePcs = SI.map(v => (v + rootPc) % 12);
