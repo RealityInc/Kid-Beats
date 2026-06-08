@@ -74,6 +74,69 @@ class VocalAnalysisEngine {
 class MoodPresetEngine { resolve(input, detected) { return input === 'Auto' ? detected : input.toLowerCase(); } }
 class StylePresetEngine { resolve(input, detected) { return input === 'Auto' ? detected : input.toLowerCase(); } }
 
+// Chord progressions: semitone offsets from root, 4 chords per bar cycle.
+// Multiple options per mood — the recording's analysis picks one deterministically.
+const MOOD_PROGRESSIONS = {
+  happy: [
+    [[0,4,7],[7,11,14],[9,12,16],[5,9,12]],      // I-V-vi-IV  (pop anthem)
+    [[0,4,7],[5,9,12],[7,11,14],[0,4,7]],          // I-IV-V-I   (classic)
+    [[0,4,7],[9,12,16],[5,9,12],[7,11,14]],        // I-vi-IV-V  (50s doo-wop)
+    [[0,4,7],[5,9,12],[9,12,16],[7,11,14]],        // I-IV-vi-V  (anthem variant)
+    [[0,4,7],[2,5,9,12],[5,9,12],[7,11,14]],       // I-ii7-IV-V (jazz-pop)
+  ],
+  sad: [
+    [[0,3,7],[8,12,15],[3,7,10],[10,14,17]],       // i-VI-III-VII  (pop minor)
+    [[0,3,7],[5,8,12],[7,10,14],[0,3,7]],           // i-iv-v-i      (pure minor)
+    [[0,3,7],[10,14,17],[8,12,15],[10,14,17]],      // i-VII-VI-VII  (oscillating)
+    [[0,3,7],[3,7,10],[8,12,15],[5,8,12]],          // i-III-VI-iv   (descending)
+    [[0,3,7],[8,12,15],[7,10,14],[3,7,10]],         // i-VI-v-III    (minor waltz)
+  ],
+  chill: [
+    [[0,4,7,11],[9,12,16,19],[5,9,12,16],[7,11,14,17]], // Imaj7-vi7-IVmaj7-V7
+    [[0,4,7,11],[5,9,12,16],[2,5,9,12],[7,11,14,17]],   // Imaj7-IVmaj7-ii7-V7
+    [[0,4,7,11],[9,12,16,19],[7,11,14,17],[0,4,7,11]],  // Imaj7-vi7-V7-Imaj7
+    [[2,5,9,12],[7,11,14,17],[0,4,7,11],[9,12,16,19]],  // ii7-V7-Imaj7-vi7
+    [[0,4,7,11],[4,7,11,14],[9,12,16,19],[2,5,9,12]],   // Imaj7-IIImaj7-vi7-ii7
+  ],
+  spooky: [
+    [[0,3,7],[1,5,8],[7,11,14],[0,3,7]],            // i-bII-V-i        (phrygian)
+    [[0,3,7],[8,12,15],[1,5,8],[7,11,14]],          // i-bVI-bII-V
+    [[0,3,7],[7,10,13],[1,5,8],[0,3,7]],            // i-v°-bII-i       (diminished)
+    [[0,3,7],[3,7,10],[1,5,8],[7,11,14]],           // i-III-bII-V
+    [[0,3,7],[10,14,17],[1,5,8],[0,3,7]],           // i-bVII-bII-i
+  ],
+  silly: [
+    [[0,5,7],[0,4,7],[5,9,14],[7,12,14]],            // sus4→I, IVadd9, Vsus
+    [[0,2,7],[5,9,12],[0,5,7],[7,11,14]],            // Isus2-IV-Isus4-V
+    [[0,5,7],[10,14,17],[5,9,12],[0,4,7]],           // Isus4-bVII-IV-I
+    [[0,4,7],[0,5,7],[5,9,14],[7,12,14]],            // I-Isus4-IVadd9-Vsus
+    [[0,5,7],[5,9,12],[0,2,7],[7,12,14]],            // Isus4-IV-Isus2-Vsus
+  ],
+  epic: [
+    [[0,3,7],[8,12,15],[10,14,17],[0,3,7]],          // i-bVI-bVII-i   (cinematic)
+    [[0,3,7],[10,14,17],[5,8,12],[0,3,7]],           // i-bVII-iv-i
+    [[0,3,7],[9,13,16],[10,14,17],[0,3,7]],          // i-VI-bVII-i    (dorian VI)
+    [[0,3,7,10],[8,12,15],[10,14,17],[8,12,15]],     // im7-bVI-bVII-bVI
+    [[0,3,7],[5,8,12],[10,14,17],[8,12,15]],         // i-iv-bVII-bVI
+  ],
+};
+
+const MOOD_SCALES = {
+  happy: [0,2,4,5,7,9,11], sad: [0,2,3,5,7,8,10], chill: [0,2,4,5,7,9,11],
+  spooky: [0,2,3,5,7,8,11], silly: [0,2,4,7,9], epic: [0,2,3,5,7,9,10],
+};
+
+function pickProgression(analysis, mood) {
+  const pool = MOOD_PROGRESSIONS[mood] ?? MOOD_PROGRESSIONS.happy;
+  const NI = { C:0,'C#':1,D:2,'D#':3,E:4,F:5,'F#':6,G:7,'G#':8,A:9,'A#':10,B:11 };
+  const ki = NI[analysis.key] ?? 0;
+  const bpmInt = typeof analysis.bpm === 'number' ? Math.round(analysis.bpm) : 90;
+  const ph = (analysis.phrases || []).length;
+  const cl = (analysis.pitchContour || []).length;
+  const h = Math.abs(ki * 31 + bpmInt * 17 + ph * 53 + cl * 11) % pool.length;
+  return pool[h];
+}
+
 class BackingTrackGenerator {
   constructor() { this._nodes = []; }
   _dispose() { this._nodes.forEach(n => { try { n.dispose(); } catch(e) {} }); this._nodes = []; }
@@ -83,6 +146,8 @@ class BackingTrackGenerator {
     Tone.Transport.stop(); Tone.Transport.cancel();
     const mood = options.mood;
     const style = options.style;
+    const instruments = options.instruments || {};
+    const bpmOverride = options.bpmOverride || null;
     const isRock = style === 'rock';
     const isCountry = style === 'country';
     const is4OnFloor = style === 'dance';
@@ -90,7 +155,8 @@ class BackingTrackGenerator {
     const isElectro = style === 'weird electro';
     const moodBpmRange = { spooky:[50,95], sad:[50,90], chill:[55,100], silly:[75,130], happy:[85,135], epic:[110,165] };
     const [bpmMin, bpmMax] = moodBpmRange[mood] ?? [80, 120];
-    const effectiveBpm = Math.max(bpmMin, Math.min(bpmMax, analysis.bpm));
+    const rawBpm = typeof analysis.bpm === 'number' ? analysis.bpm : (bpmMin + bpmMax) / 2;
+    const effectiveBpm = bpmOverride ? Math.max(40, Math.min(220, bpmOverride)) : Math.max(bpmMin, Math.min(bpmMax, rawBpm));
     Tone.Transport.bpm.value = effectiveBpm;
     const secPerBar = (60 / effectiveBpm) * 4;
     let target = options.length === 'match' ? analysis.durationSec : Number(options.length);
@@ -98,29 +164,53 @@ class BackingTrackGenerator {
     const bars = Math.ceil(target / secPerBar);
     const totalSec = bars * secPerBar;
 
-    // Kick — genre-specific punch and decay
-    const drum = new Tone.MembraneSynth(isHipHop
-      ? { pitchDecay: 0.18, octaves: 9, envelope: { attack: 0.001, decay: 0.6, sustain: 0 } }
-      : isRock
-      ? { pitchDecay: 0.06, octaves: 5, envelope: { attack: 0.001, decay: 0.2, sustain: 0 } }
-      : { pitchDecay: 0.05, octaves: 4 });
+    // Drum kit — override with selected kit or fall back to style/mood defaults
+    const kitPresets = {
+      clean: { kickOpts:{pitchDecay:0.05,octaves:4,envelope:{attack:0.001,decay:0.28,sustain:0}}, snareDecay:0.10, noiseType:'pink' },
+      lofi:  { kickOpts:{pitchDecay:0.09,octaves:3,envelope:{attack:0.001,decay:0.38,sustain:0}}, snareDecay:0.22, noiseType:'pink' },
+      heavy: { kickOpts:{pitchDecay:0.06,octaves:6,envelope:{attack:0.001,decay:0.16,sustain:0}}, snareDecay:0.07, noiseType:'white' },
+      '808': { kickOpts:{pitchDecay:0.32,octaves:9,envelope:{attack:0.001,decay:0.65,sustain:0}}, snareDecay:0.14, noiseType:'pink' },
+    };
+    const kit = kitPresets[instruments.drums];
+    const kickOpts = kit ? kit.kickOpts
+      : isHipHop ? { pitchDecay:0.18,octaves:9,envelope:{attack:0.001,decay:0.6,sustain:0} }
+      : isRock    ? { pitchDecay:0.06,octaves:5,envelope:{attack:0.001,decay:0.2,sustain:0} }
+      :              { pitchDecay:0.05,octaves:4 };
+    const snareDecay = kit ? kit.snareDecay : isRock ? 0.09 : 0.13;
+    const snareNoise = kit ? kit.noiseType  : isRock ? 'white' : 'pink';
+    const drum  = new Tone.MembraneSynth(kickOpts);
+    const snare = new Tone.NoiseSynth({ noise:{type:snareNoise}, envelope:{attack:0.001,decay:snareDecay,sustain:0} });
+    const hat   = new Tone.NoiseSynth({ noise:{type:'white'},    envelope:{attack:0.001,decay:0.05,sustain:0} });
 
-    // Snare — white noise for rock punch, pink for others
-    const snare = new Tone.NoiseSynth({ noise: { type: isRock ? 'white' : 'pink' }, envelope: { attack: 0.001, decay: isRock ? 0.09 : 0.13, sustain: 0 } });
-    const hat = new Tone.NoiseSynth({ noise: { type: 'white' }, envelope: { attack: 0.001, decay: 0.05, sustain: 0 } });
-
-    // Bass oscillator — sine for hip-hop warmth, saw for rock/electro edge, square for dance, triangle default
-    const bassOsc = isHipHop ? 'sine' : (isRock || isElectro) ? 'sawtooth' : is4OnFloor ? 'square' : 'triangle';
-    const bass = new Tone.Synth({ oscillator: { type: bassOsc }, envelope: { attack: 0.01, decay: 0.3, sustain: 0.6, release: 0.4 } });
+    // Bass instrument — override with user selection or derive from style
+    const bassPresets = {
+      sub:   ['sine',     {attack:0.01,decay:0.5, sustain:0.7,release:0.5}],
+      growl: ['sawtooth', {attack:0.01,decay:0.2, sustain:0.8,release:0.3}],
+      square:['square',   {attack:0.01,decay:0.2, sustain:0.6,release:0.3}],
+      pluck: ['triangle', {attack:0.001,decay:0.4,sustain:0,  release:0.2}],
+    };
+    const bassP = bassPresets[instruments.bass];
+    const bassOscFinal = bassP ? bassP[0] : isHipHop ? 'sine' : (isRock||isElectro) ? 'sawtooth' : is4OnFloor ? 'square' : 'triangle';
+    const bassEnv  = bassP ? bassP[1] : {attack:0.01,decay:0.3,sustain:0.6,release:0.4};
+    const bass = new Tone.Synth({ oscillator:{type:bassOscFinal}, envelope:bassEnv });
 
     // Chords — slow attack for atmospheric moods, sawtooth edge for rock
     const chordAtk = mood === 'spooky' ? 2.0 : (mood === 'chill' || mood === 'sad') ? 1.0 : 0.04;
     const chordOsc = (mood === 'spooky' || mood === 'chill' || mood === 'sad') ? 'sine' : isRock ? 'sawtooth' : 'triangle';
-    const poly = new Tone.PolySynth(Tone.Synth, { oscillator: { type: chordOsc }, envelope: { attack: chordAtk, decay: 0.4, sustain: 0.7, release: 1.2 } });
+    const poly = new Tone.PolySynth(Tone.Synth, { oscillator:{type:chordOsc}, envelope:{attack:chordAtk,decay:0.4,sustain:0.7,release:1.2} });
 
-    // Melody — sawtooth for rock/electro bite, sine for sad/spooky softness, triangle default
-    const melOsc = (isRock || isElectro) ? 'sawtooth' : (mood === 'spooky' || mood === 'sad') ? 'sine' : 'triangle';
-    const melody = new Tone.Synth({ oscillator: { type: melOsc }, envelope: { attack: 0.02, decay: 0.2, sustain: 0.5, release: 0.3 } });
+    // Melody instrument — override with user selection or derive from style/mood
+    const melPresets = {
+      lead:  ['sawtooth', {attack:0.01, decay:0.1, sustain:0.7,release:0.2}],
+      pluck: ['triangle', {attack:0.001,decay:0.35,sustain:0,  release:0.1}],
+      bell:  ['sine',     {attack:0.001,decay:1.2, sustain:0,  release:0.5}],
+      flute: ['sine',     {attack:0.06, decay:0.1, sustain:0.7,release:0.3}],
+      square:['square',   {attack:0.01, decay:0.1, sustain:0.5,release:0.15}],
+    };
+    const melP = melPresets[instruments.melody];
+    const melOsc = melP ? melP[0] : (isRock||isElectro) ? 'sawtooth' : (mood==='spooky'||mood==='sad') ? 'sine' : 'triangle';
+    const melEnv = melP ? melP[1] : {attack:0.02,decay:0.2,sustain:0.5,release:0.3};
+    const melody = new Tone.Synth({ oscillator:{type:melOsc}, envelope:melEnv });
 
     // Atmospheric pad — lush long notes for spooky/chill/sad/epic
     const usePad = ['spooky', 'chill', 'sad', 'epic'].includes(mood);
@@ -171,24 +261,10 @@ class BackingTrackGenerator {
     const rootMap = { C:'C2','C#':'C#2',D:'D2','D#':'D#2',E:'E2',F:'F2','F#':'F#2',G:'G2','G#':'G#2',A:'A2','A#':'A#2',B:'B2' };
     const root = rootMap[analysis.key] || 'C2';
 
-    // Each mood gets its own chord progression and scale.
-    //   prog: semitone offsets from root for each chord tone, 4 bars
-    //   SI:   scale intervals (semitones from root), used for snapping + melody arpeggios
-    const moodHarmony = {
-      // I-V-vi-IV: the bright "four-chord" pop progression
-      happy:  { prog: [[0,4,7],[7,11,14],[9,12,16],[5,9,12]],      SI: [0,2,4,5,7,9,11] },
-      // i-VI-III-VII: natural minor, the sad pop ballad progression
-      sad:    { prog: [[0,3,7],[8,12,15],[3,7,10],[10,14,17]],      SI: [0,2,3,5,7,8,10] },
-      // Imaj7-vi7-IVmaj7-V7: jazz turnaround, warm and sophisticated
-      chill:  { prog: [[0,4,7,11],[9,12,16,19],[5,9,12,16],[7,11,14,17]], SI: [0,2,4,5,7,9,11] },
-      // i-bII-V-i: phrygian flat-two + harmonic minor V, classic horror tension
-      spooky: { prog: [[0,3,7],[1,5,8],[7,11,14],[0,3,7]],          SI: [0,2,3,5,7,8,11] },
-      // sus4→I, IVadd9, Vsus2: unresolved suspensions over pentatonic, playful and off-kilter
-      silly:  { prog: [[0,5,7],[0,4,7],[5,9,14],[7,12,14]],         SI: [0,2,4,7,9] },
-      // i-bVI-bVII-i: cinematic minor over dorian scale, sweeping and powerful
-      epic:   { prog: [[0,3,7],[8,12,15],[10,14,17],[0,3,7]],       SI: [0,2,3,5,7,9,10] },
-    };
-    const { prog, SI } = moodHarmony[mood] ?? moodHarmony.happy;
+    // Pick a chord progression from the pool using a hash of the analysis
+    // so each unique recording gets a distinct progression.
+    const prog = pickProgression(analysis, mood);
+    const SI = MOOD_SCALES[mood] ?? MOOD_SCALES.happy;
 
     const NI = { C:0,'C#':1,D:2,'D#':3,E:4,F:5,'F#':6,G:7,'G#':8,A:9,'A#':10,B:11 };
     const rootPc = NI[analysis.key] ?? 0;
@@ -467,15 +543,18 @@ function scaleForMood(mood) {
 }
 
 function applyTuning() {
-  if (!document.getElementById('tuneSyncToggle').checked || !generatedResult || !analysis) {
-    return player.clearTuning();
-  }
+  if (!generatedResult || !analysis) return player.clearTuning();
+  const autoTune = document.getElementById('autoTuneToggle').checked;
+  const quantize  = document.getElementById('quantizeToggle').checked;
+  if (!autoTune && !quantize) return player.clearTuning();
+
   const mood = moodEngine.resolve(moodSelect.value, analysis.mood);
   const targetScale = scaleForMood(mood);
-  const schedule = computePitchSchedule(analysis.pitchContour, analysis.key, targetScale);
+  const schedule = autoTune ? computePitchSchedule(analysis.pitchContour, analysis.key, targetScale) : null;
   const vocalBpm = typeof analysis.bpm === 'number' ? analysis.bpm : generatedResult.effectiveBpm;
-  player.setTuning(schedule, generatedResult.effectiveBpm / vocalBpm);
-  debug.scheduleLen = schedule.length; setDebug();
+  const tempoRatio = quantize ? generatedResult.effectiveBpm / vocalBpm : 1;
+  player.setTuning(schedule, tempoRatio);
+  debug.scheduleLen = schedule ? schedule.length : 0; setDebug();
 }
 
 function showScreen(id) { document.querySelectorAll('.screen').forEach((s)=>s.classList.remove('active')); document.getElementById(id).classList.add('active'); }
@@ -519,10 +598,16 @@ function resetAll() {
 clearBtn.onclick = resetAll;
 document.getElementById('startOver2Btn').onclick = resetAll;
 document.getElementById('startOver3Btn').onclick = resetAll;
-document.getElementById('tuneSyncToggle').onchange = applyTuning;
+document.getElementById('autoTuneToggle').onchange = applyTuning;
+document.getElementById('quantizeToggle').onchange  = applyTuning;
 const isPlaying = () => ['playingBacking', 'playingTogether'].includes(stateMachine.state);
-moodSelect.onchange = () => { applyTuning(); if (generatedResult && !isPlaying()) regenerate(); };
-styleSelect.onchange = () => { if (generatedResult && !isPlaying()) regenerate(); };
+const regenIfIdle = () => { if (generatedResult && !isPlaying()) regenerate(); };
+moodSelect.onchange = () => { applyTuning(); regenIfIdle(); };
+styleSelect.onchange = regenIfIdle;
+document.getElementById('melodyInstrument').onchange = regenIfIdle;
+document.getElementById('bassInstrument').onchange   = regenIfIdle;
+document.getElementById('drumKit').onchange          = regenIfIdle;
+document.getElementById('bpmInput').onchange         = regenIfIdle;
 
 analyzeBtn.onclick = async () => {
   if (!vocalBlob) return;
@@ -561,9 +646,17 @@ async function regenerate() {
   stateMachine.set('generating');
   const mood = moodEngine.resolve(moodSelect.value, analysis.mood);
   const style = styleEngine.resolve(styleSelect.value, analysis.styleSuggestion);
+  const bpmVal = parseInt(document.getElementById('bpmInput').value);
+  const bpmOverride = !isNaN(bpmVal) && bpmVal >= 40 && bpmVal <= 220 ? bpmVal : null;
+  const instruments = {
+    melody: document.getElementById('melodyInstrument').value,
+    bass:   document.getElementById('bassInstrument').value,
+    drums:  document.getElementById('drumKit').value,
+  };
   try {
-    const res = await generator.generate(analysis, { mood, style, length: lengthSelect.value });
+    const res = await generator.generate(analysis, { mood, style, length: lengthSelect.value, instruments, bpmOverride });
     generatedResult = res;
+    document.getElementById('bpmInput').value = res.effectiveBpm;
     debug.backing = `generated (${res.bars} bars, ${res.totalSec.toFixed(1)}s, bpm:${res.effectiveBpm}, drums:${res.drumMode}, melody:${res.melodySource})`;
     debug.context = Tone.context.state;
     setDebug();

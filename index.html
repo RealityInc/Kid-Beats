@@ -63,7 +63,8 @@
         <button id="stopPlaybackBtn">Stop</button>
       </div>
       <div class="row">
-        <label><input type="checkbox" id="tuneSyncToggle" checked> Tune &amp; Sync voice to backing</label>
+        <label><input type="checkbox" id="autoTuneToggle" checked> Auto-tune voice to key</label>
+        <label><input type="checkbox" id="quantizeToggle" checked> Quantize voice to tempo</label>
       </div>
       <div class="row">
         <label>Mood
@@ -75,7 +76,41 @@
         <label>Length
           <select id="lengthSelect"><option value="match">Match vocal length</option><option value="30">30 seconds</option><option value="60">60 seconds</option></select>
         </label>
+        <label>BPM <input type="number" id="bpmInput" min="40" max="220" step="1" style="width:60px" placeholder="Auto"></label>
         <button id="regenerateBtn">Regenerate</button>
+      </div>
+      <div class="card" style="margin:0 0 10px; padding:10px;">
+        <div style="font-weight:bold;margin-bottom:8px;">Tracks</div>
+        <div class="row" style="margin-bottom:6px;">
+          <label style="flex:1;min-width:120px;">&#127925; Melody
+            <select id="melodyInstrument" style="width:100%">
+              <option value="auto">Auto</option>
+              <option value="lead">Lead synth</option>
+              <option value="pluck">Pluck</option>
+              <option value="bell">Bell</option>
+              <option value="flute">Flute</option>
+              <option value="square">Square wave</option>
+            </select>
+          </label>
+          <label style="flex:1;min-width:120px;">&#127928; Bass
+            <select id="bassInstrument" style="width:100%">
+              <option value="auto">Auto</option>
+              <option value="sub">Sub bass</option>
+              <option value="growl">Growl</option>
+              <option value="square">Square</option>
+              <option value="pluck">Pluck bass</option>
+            </select>
+          </label>
+          <label style="flex:1;min-width:120px;">&#129345; Drums
+            <select id="drumKit" style="width:100%">
+              <option value="auto">Auto</option>
+              <option value="clean">Clean</option>
+              <option value="lofi">Lo-fi</option>
+              <option value="heavy">Heavy</option>
+              <option value="808">808</option>
+            </select>
+          </label>
+        </div>
       </div>
       <div class="row">
         <button id="backToAnalysisBtn">Back to Analysis</button>
