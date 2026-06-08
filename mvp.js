@@ -295,56 +295,63 @@ class BackingTrackGenerator {
 
 class PlaybackEngine {
   constructor() {
-    // this.voice: plain HTML audio element — used for direct playback (playVoice)
-    // this._voiceWA: separate element routed through Web Audio — used for playTogether
-    this.voice = new Audio();
-    this._voiceWA = new Audio();
-    this._source = null; this._pitchShift = null; this._rafId = null;
-    this._rateCompensation = 0; this._pitchSchedule = null;
+    this.voice = new Audio();   // plain element for playVoice() only
+    this._voiceUrl = null;
+    this._tonePlayer = null;    // Tone.Player used for playTogether()
+    this._pitchShift = null;
+    this._rafId = null;
+    this._rateCompensation = 0;
+    this._tempoRatio = 1;
+    this._pitchSchedule = null;
+    this._playerStartAT = 0;   // AudioContext time when playTogether started
+    this.chainMode = 'uninitialized';
+  }
+  _disposeChain() {
+    if (this._tonePlayer) { try { this._tonePlayer.dispose(); } catch(e) {} this._tonePlayer = null; }
+    if (this._pitchShift) { try { this._pitchShift.dispose(); } catch(e) {} this._pitchShift = null; }
     this.chainMode = 'uninitialized';
   }
   _ensureAudioChain() {
-    if (this._source) return;
-    // Use the native AudioContext directly so .connect() uses native Web Audio API,
-    // bypassing Tone.js's internal node-graph registry (which throws on unregistered nodes).
-    const nativeCtx = Tone.getContext().rawContext || Tone.context;
-    this._source = nativeCtx.createMediaElementSource(this._voiceWA);
-    try {
-      this._pitchShift = new Tone.PitchShift(0).toDestination();
-      // PitchShift.input is a Tone.js Gain; Gain.input is the native GainNode.
-      this._source.connect(this._pitchShift.input.input);
-      this.chainMode = 'pitchShift';
-    } catch(e) {
-      this._pitchShift = null;
-      try { this._source.connect(nativeCtx.destination); this.chainMode = 'nativeDest'; } catch(_) { this.chainMode = 'error'; }
-    }
+    if (this._tonePlayer) return;
+    // Tone.Player → Tone.PitchShift → destination: all within Tone.js graph, no native bridge needed.
+    this._pitchShift = new Tone.PitchShift(0).toDestination();
+    this._tonePlayer = new Tone.Player({ url: this._voiceUrl, loop: false }).connect(this._pitchShift);
+    this._tonePlayer.playbackRate = this._tempoRatio;
+    this.chainMode = 'tonePlayer+pitchShift';
   }
-  setVoiceUrl(url) { this.voice.src = url; this._voiceWA.src = url; }
+  setVoiceUrl(url) {
+    this.voice.src = url;
+    this._voiceUrl = url;
+    this._disposeChain();
+  }
   setTuning(pitchSchedule, tempoRatio) {
     this._pitchSchedule = pitchSchedule;
-    this._voiceWA.playbackRate = tempoRatio;
+    this._tempoRatio = tempoRatio;
     this._rateCompensation = -12 * Math.log2(tempoRatio);
+    if (this._tonePlayer) this._tonePlayer.playbackRate = tempoRatio;
   }
   clearTuning() {
-    this._pitchSchedule = null; this._voiceWA.playbackRate = 1; this._rateCompensation = 0;
+    this._pitchSchedule = null; this._tempoRatio = 1; this._rateCompensation = 0;
+    if (this._tonePlayer) this._tonePlayer.playbackRate = 1;
     if (this._pitchShift) this._pitchShift.pitch = 0;
   }
   _startPitchTracking() {
     this._stopPitchTracking();
     if (!this._pitchShift) return;
     let i = 0, lastSched = null;
+    const startAT = this._playerStartAT;
     const loop = () => {
       const sched = this._pitchSchedule;
-      // Reset index when schedule changes (e.g. mood changed mid-playback)
       if (sched !== lastSched) { i = 0; lastSched = sched; }
       if (sched && sched.length) {
-        const t = this._voiceWA.currentTime;
+        // Convert wall-clock elapsed time to original-recording position via tempoRatio
+        const t = (Tone.now() - startAT) * this._tempoRatio;
         while (i < sched.length - 1 && sched[i + 1].time <= t) i++;
         this._pitchShift.pitch = sched[i].shift + this._rateCompensation;
       } else {
         this._pitchShift.pitch = this._rateCompensation;
       }
-      if (!this._voiceWA.paused) this._rafId = requestAnimationFrame(loop);
+      if (Tone.Transport.state === 'started') this._rafId = requestAnimationFrame(loop);
     };
     this._rafId = requestAnimationFrame(loop);
   }
@@ -357,20 +364,22 @@ class PlaybackEngine {
   async playBacking() { await Tone.start(); this.stop(); Tone.Transport.position = 0; Tone.Transport.start(); }
   async playTogether() {
     this.stop();
-    this._ensureAudioChain(); // wire _voiceWA through Web Audio chain (idempotent)
-    this._voiceWA.currentTime = 0;
+    this._ensureAudioChain();
+    await Tone.start();
+    if (!this._tonePlayer.loaded) await this._tonePlayer.load(this._voiceUrl);
     Tone.Transport.position = 0;
-    // Call _voiceWA.play() synchronously before any await so iOS gesture context is preserved
-    const voicePlay = this._voiceWA.play();
-    await Tone.start(); Tone.Transport.start();
-    try { await voicePlay; } catch(e) {}
+    const startAt = Tone.now();
+    this._playerStartAT = startAt;
+    this._tonePlayer.start(startAt);
+    Tone.Transport.start();
     this._startPitchTracking();
   }
   stop() {
     this._stopPitchTracking();
     this.voice.pause(); this.voice.currentTime = 0;
-    this._voiceWA.pause(); this._voiceWA.currentTime = 0;
-    if (this._pitchShift) this._pitchShift.pitch = 0; Tone.Transport.stop();
+    if (this._tonePlayer) try { this._tonePlayer.stop(); } catch(e) {}
+    if (this._pitchShift) this._pitchShift.pitch = 0;
+    Tone.Transport.stop();
   }
 }
 
@@ -548,5 +557,5 @@ regenerateBtn.onclick = regenerate;
 backToAnalysisBtn.onclick = ()=>showScreen('screen-analysis');
 playVoice2Btn.onclick = async () => { try { await player.playVoice(); debug.playback='voice'; } catch(e) { debug.playback='error: '+(e?.message||e); } setDebug(); };
 playBackingBtn.onclick = ()=>{ stateMachine.set('playingBacking'); player.playBacking(); };
-playTogetherBtn.onclick = ()=>{ stateMachine.set('playingTogether'); player.playTogether(); setTimeout(()=>{ debug.pitchChain=player.chainMode; setDebug(); },200); };
+playTogetherBtn.onclick = ()=>{ stateMachine.set('playingTogether'); player.playTogether(); debug.pitchChain=player.chainMode; setDebug(); };
 stopPlaybackBtn.onclick = ()=>{ stateMachine.set('stopped'); player.stop(); debug.playback='stopped'; setDebug(); };
