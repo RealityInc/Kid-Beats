@@ -98,9 +98,22 @@
         <button id="playTogetherBtn">Play Together</button>
         <button id="stopPlaybackBtn">Stop</button>
       </div>
-      <div class="row">
-        <label><input type="checkbox" id="autoTuneToggle" checked> Auto-tune voice to key</label>
-        <label><input type="checkbox" id="quantizeToggle" checked> Quantize voice to tempo</label>
+      <div class="row" style="align-items:center;gap:14px;">
+        <label style="display:flex;align-items:center;gap:6px;white-space:nowrap;">
+          Auto-tune
+          <input type="range" id="autoTuneToggle" min="0" max="100" value="100" style="width:72px">
+          <span id="autoTuneVal" style="font-size:0.8rem;min-width:32px">100%</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;white-space:nowrap;">
+          Quantize
+          <input type="range" id="quantizeToggle" min="0" max="100" value="100" style="width:72px">
+          <span id="quantizeVal" style="font-size:0.8rem;min-width:32px">100%</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;white-space:nowrap;">
+          Humanize
+          <input type="range" id="humanizeToggle" min="0" max="100" value="0" style="width:72px">
+          <span id="humanizeVal" style="font-size:0.8rem;min-width:32px">0%</span>
+        </label>
       </div>
       <div class="row">
         <label>Mood

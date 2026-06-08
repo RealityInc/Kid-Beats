@@ -121,13 +121,93 @@ const MOOD_PROGRESSIONS = {
   ],
 };
 
+// Genre-specific chord progressions — override MOOD_PROGRESSIONS when style is set
+const STYLE_PROGRESSIONS = {
+  rock: {
+    happy: [
+      [[0,4,7],[7,11,14],[5,9,12],[7,11,14]],       // I-V-IV-V   (classic rock)
+      [[0,4,7],[5,9,12],[7,11,14],[5,9,12]],         // I-IV-V-IV  (blues rock)
+      [[0,4,7],[10,14,17],[8,12,15],[7,11,14]],      // I-bVII-bVI-V (grunge/hard)
+      [[0,4,7],[5,9,12],[8,12,15],[10,14,17]],       // I-IV-bVI-bVII (anthemic)
+    ],
+    sad: [
+      [[0,3,7],[8,12,15],[10,14,17],[7,11,14]],      // i-bVI-bVII-v (rock ballad)
+      [[0,3,7],[10,14,17],[8,12,15],[5,8,12]],       // i-bVII-bVI-iv
+      [[0,3,7],[5,8,12],[8,12,15],[7,10,14]],        // i-iv-bVI-v
+    ],
+  },
+  country: {
+    happy: [
+      [[0,4,7],[5,9,12],[7,11,14],[0,4,7]],          // I-IV-V-I   (Nashville staple)
+      [[0,4,7],[7,11,14],[0,4,7],[7,11,14]],          // I-V-I-V   (two-chord shuffle)
+      [[0,4,7],[9,12,16],[5,9,12],[7,11,14]],         // I-vi-IV-V  (classic country)
+      [[0,4,7],[5,9,12],[0,4,7],[5,9,12]],             // I-IV-I-IV  (vamp)
+    ],
+    sad: [
+      [[0,3,7],[5,8,12],[7,10,14],[0,3,7]],           // i-iv-v-i
+      [[0,4,7],[9,12,16],[5,9,12],[7,11,14]],          // I-vi-IV-V (wistful)
+      [[0,4,7],[5,9,12],[9,12,16],[7,11,14]],          // I-IV-vi-V
+    ],
+  },
+  'hip-hop': {
+    happy: [
+      [[0,3,7],[10,14,17]],                            // i-bVII (2-bar vamp)
+      [[0,3,7],[5,8,12]],                              // i-iv
+      [[0,3,7],[8,12,15],[10,14,17],[8,12,15]],        // i-bVI-bVII-bVI
+      [[0,3,7,10],[8,12,15],[10,14,17],[5,8,12]],      // im7-bVI-bVII-iv (soulful)
+    ],
+    sad: [
+      [[0,3,7],[10,14,17]],                            // i-bVII
+      [[0,3,7],[8,12,15]],                             // i-bVI
+      [[0,3,7],[8,12,15],[5,8,12],[10,14,17]],         // i-bVI-iv-bVII
+    ],
+  },
+  dance: {
+    happy: [
+      [[0,3,7],[10,14,17],[8,12,15],[10,14,17]],      // i-bVII-bVI-bVII (rave classic)
+      [[0,4,7],[5,9,12],[3,7,10],[7,11,14]],          // I-IV-iii-V (uplifting EDM)
+      [[0,3,7],[5,8,12],[8,12,15],[10,14,17]],        // i-iv-bVI-bVII
+      [[0,4,7],[9,12,16],[5,9,12],[7,11,14]],         // I-vi-IV-V (anthemic)
+    ],
+    sad: [
+      [[0,3,7],[10,14,17],[8,12,15],[10,14,17]],      // i-bVII-bVI-bVII (dark rave)
+      [[0,3,7],[8,12,15],[5,8,12],[10,14,17]],        // i-bVI-iv-bVII
+    ],
+  },
+  'weird electro': {
+    happy: [
+      [[0,3,7],[6,10,13],[10,14,17],[1,5,8]],         // i-#iv°-bVII-bII (bizarre)
+      [[0,4,7],[6,9,13],[10,14,17],[5,9,12]],         // I-#IV-bVII-IV
+      [[0,3,7],[2,5,9],[10,14,17],[7,11,14]],         // i-II-bVII-V
+    ],
+    sad: [
+      [[0,3,7],[6,10,13],[3,7,10],[10,14,17]],        // i-#iv°-III-bVII
+      [[0,3,7],[1,5,8],[7,10,14],[10,14,17]],         // i-bII-v-bVII
+    ],
+  },
+  pop: {
+    happy: [
+      [[0,4,7],[7,11,14],[9,12,16],[5,9,12]],         // I-V-vi-IV (the pop 4 chord)
+      [[0,4,7],[5,9,12],[9,12,16],[7,11,14]],         // I-IV-vi-V
+      [[0,4,7],[9,12,16],[5,9,12],[7,11,14]],         // I-vi-IV-V (50s)
+    ],
+    sad: [
+      [[0,3,7],[8,12,15],[5,8,12],[10,14,17]],        // i-bVI-iv-bVII
+      [[0,3,7],[8,12,15],[3,7,10],[10,14,17]],        // i-bVI-III-bVII
+    ],
+  },
+};
+
 const MOOD_SCALES = {
   happy: [0,2,4,5,7,9,11], sad: [0,2,3,5,7,8,10], chill: [0,2,4,5,7,9,11],
   spooky: [0,2,3,5,7,8,11], silly: [0,2,4,7,9], epic: [0,2,3,5,7,9,10],
 };
 
-function pickProgression(analysis, mood) {
-  const pool = MOOD_PROGRESSIONS[mood] ?? MOOD_PROGRESSIONS.happy;
+function pickProgression(analysis, mood, style) {
+  const styleMap = STYLE_PROGRESSIONS[style];
+  const pool = styleMap
+    ? (styleMap[mood] ?? styleMap.happy ?? Object.values(styleMap)[0])
+    : (MOOD_PROGRESSIONS[mood] ?? MOOD_PROGRESSIONS.happy);
   const NI = { C:0,'C#':1,D:2,'D#':3,E:4,F:5,'F#':6,G:7,'G#':8,A:9,'A#':10,B:11 };
   const ki = NI[analysis.key] ?? 0;
   const bpmInt = typeof analysis.bpm === 'number' ? Math.round(analysis.bpm) : 90;
@@ -164,13 +244,16 @@ class BackingTrackGenerator {
     const melKey   = instruments.melody === 'auto' ? styleDefs.melody : instruments.melody;
     const bassKey  = instruments.bass   === 'auto' ? styleDefs.bass   : instruments.bass;
     const drumsKey = instruments.drums  === 'auto' ? styleDefs.drums  : instruments.drums;
+    const humanize = Math.max(0, Math.min(1, options.humanize || 0));
     const isRock = style === 'rock';
     const isCountry = style === 'country';
     const is4OnFloor = style === 'dance';
     const isHipHop = style === 'hip-hop';
     const isElectro = style === 'weird electro';
+    // Style-specific BPM ranges override mood ranges for authentic genre tempo
     const moodBpmRange = { spooky:[50,95], sad:[50,90], chill:[55,100], silly:[75,130], happy:[85,135], epic:[110,165] };
-    const [bpmMin, bpmMax] = moodBpmRange[mood] ?? [80, 120];
+    const styleBpmRange = { rock:[100,150], country:[80,110], 'hip-hop':[70,100], dance:[118,135], 'weird electro':[110,145], pop:[88,125] };
+    const [bpmMin, bpmMax] = styleBpmRange[style] ?? moodBpmRange[mood] ?? [80, 120];
     const rawBpm = typeof analysis.bpm === 'number' ? analysis.bpm : (bpmMin + bpmMax) / 2;
     const effectiveBpm = bpmOverride ? Math.max(40, Math.min(220, bpmOverride)) : Math.max(bpmMin, Math.min(bpmMax, rawBpm));
     Tone.Transport.bpm.value = effectiveBpm;
@@ -316,7 +399,7 @@ class BackingTrackGenerator {
 
     // Pick a chord progression from the pool using a hash of the analysis
     // so each unique recording gets a distinct progression.
-    const prog = pickProgression(analysis, mood);
+    const prog = pickProgression(analysis, mood, style);
     const SI = MOOD_SCALES[mood] ?? MOOD_SCALES.happy;
 
     const NI = { C:0,'C#':1,D:2,'D#':3,E:4,F:5,'F#':6,G:7,'G#':8,A:9,'A#':10,B:11 };
@@ -342,8 +425,16 @@ class BackingTrackGenerator {
     }
     if (!melodyMotif) {
       const pitches = SI.map(v => Tone.Frequency(rootPc + v + 60, 'midi').toNote());
-      // Melodic contours tuned to each mood's scale and character
-      const pats = {
+      // Style-specific patterns take priority — genre feel over mood feel
+      const stylePats = {
+        rock:          [0,4,2,4,0,2,4,2],  // pentatonic punch
+        country:       [0,1,2,3,2,1,2,0],  // stepwise vocal walk
+        'hip-hop':     [0,0,3,3,0,5,3,0],  // rhythmic bounce
+        dance:         [0,4,4,0,2,4,2,0],  // arpeggiated drive
+        'weird electro':[0,3,6,1,4,2,5,3], // chromatic weirdness
+        pop:           [0,2,4,2,4,5,4,2],  // ascending brightness
+      };
+      const moodPats = {
         happy:  [0,2,4,2,4,5,4,2],  // ascending brightness
         sad:    [0,1,2,1,0,2,1,0],  // drooping minor steps
         chill:  [0,2,4,3,4,2,4,2],  // lazy jazz swing
@@ -351,8 +442,16 @@ class BackingTrackGenerator {
         silly:  [0,3,1,4,2,4,0,3],  // jumpy, unpredictable leaps
         epic:   [0,4,6,2,4,6,4,2],  // sweeping dorian ascent
       };
-      melodyMotif = (pats[mood] || pats.happy).map((idx, i) => ({ time: i * eighthSec, note: pitches[idx % pitches.length] }));
+      melodyMotif = (stylePats[style] || moodPats[mood] || moodPats.happy).map((idx, i) => ({ time: i * eighthSec, note: pitches[idx % pitches.length] }));
     }
+
+    // Humanization helpers — add subtle timing/velocity variation at non-zero humanize
+    const hTime = humanize > 0
+      ? (t) => t + (Math.random() - 0.5) * humanize * 0.025  // ±12.5ms at 100%
+      : (t) => t;
+    const hVel = humanize > 0
+      ? (v) => Math.max(0.05, Math.min(1, v + (Math.random() - 0.5) * humanize * 0.25))
+      : (v) => v;
 
     // Drum patterns
     const phraseEnergies = analysis.phrases.map(p => p.energy);
@@ -378,74 +477,78 @@ class BackingTrackGenerator {
       const chord = prog[bar % prog.length].map((n) => Tone.Frequency(root).transpose(n).toNote());
 
       kickBeats.forEach(f => {
-        const st = t + secPerBar * f, kdur = isHipHop ? '4n' : '8n', kv = 0.65 + dynVel * 0.3;
+        const st = hTime(t + secPerBar * f), kdur = isHipHop ? '4n' : '8n', kv = hVel(0.65 + dynVel * 0.3);
         sched('kick', { note:'C1', duration:kdur, velocity:kv }, (time) => drum.triggerAttackRelease('C1', kdur, time, kv), st);
       });
       snareBeats.forEach(f => {
-        const st = t + secPerBar * f, sv = isCountry ? 0.12 + dynVel * 0.1 : 0.25 + dynVel * 0.2;
+        const st = hTime(t + secPerBar * f), sv = hVel(isCountry ? 0.12 + dynVel * 0.1 : 0.25 + dynVel * 0.2);
         sched('snare', { duration:'8n', velocity:sv }, (time) => snare.triggerAttackRelease('8n', time, sv), st);
       });
       hatBeats.forEach(f => {
-        const st = t + secPerBar * f, hv = 0.08 + dynVel * 0.15;
+        const st = hTime(t + secPerBar * f), hv = hVel(0.08 + dynVel * 0.15);
         sched('hat', { duration:'16n', velocity:hv }, (time) => hat.triggerAttackRelease('16n', time, hv), st);
       });
 
       // Chords — genre-specific patterns
       if (isHipHop) {
-        sched('chords', { notes:chord, duration:'4n', velocity:0.3 }, (time) => poly.triggerAttackRelease(chord, '4n', time, 0.3), t);
-        sched('chords', { notes:chord, duration:'8n', velocity:0.22 }, (time) => poly.triggerAttackRelease(chord, '8n', time, 0.22), t + secPerBar * 0.375);
+        const cv1 = hVel(0.3), cv2 = hVel(0.22);
+        sched('chords', { notes:chord, duration:'4n', velocity:cv1 }, (time) => poly.triggerAttackRelease(chord, '4n', time, cv1), hTime(t));
+        sched('chords', { notes:chord, duration:'8n', velocity:cv2 }, (time) => poly.triggerAttackRelease(chord, '8n', time, cv2), hTime(t + secPerBar * 0.375));
       } else if (isCountry) {
-        const strm = chord.slice(0, 2);
-        sched('chords', { notes:strm, duration:'8n', velocity:0.32 }, (time) => poly.triggerAttackRelease(strm, '8n', time, 0.32), t + secPerBar * 0.25);
-        sched('chords', { notes:strm, duration:'8n', velocity:0.32 }, (time) => poly.triggerAttackRelease(strm, '8n', time, 0.32), t + secPerBar * 0.75);
+        const strm = chord.slice(0, 2), cs = hVel(0.32);
+        sched('chords', { notes:strm, duration:'8n', velocity:cs }, (time) => poly.triggerAttackRelease(strm, '8n', time, cs), hTime(t + secPerBar * 0.25));
+        sched('chords', { notes:strm, duration:'8n', velocity:cs }, (time) => poly.triggerAttackRelease(strm, '8n', time, cs), hTime(t + secPerBar * 0.75));
       } else if (isRock) {
-        [0, 0.25, 0.5, 0.75].forEach(f =>
-          sched('chords', { notes:chord, duration:'16n', velocity:0.38 }, (time) => poly.triggerAttackRelease(chord, '16n', time, 0.38), t + secPerBar * f));
+        [0, 0.25, 0.5, 0.75].forEach(f => {
+          const rv = hVel(0.38);
+          sched('chords', { notes:chord, duration:'16n', velocity:rv }, (time) => poly.triggerAttackRelease(chord, '16n', time, rv), hTime(t + secPerBar * f));
+        });
       } else if (mood === 'epic') {
-        const edur = `${(secPerBar * 0.45).toFixed(3)}s`;
-        sched('chords', { notes:chord, duration:edur, velocity:0.4 }, (time) => poly.triggerAttackRelease(chord, edur, time, 0.4), t);
-        sched('chords', { notes:chord, duration:edur, velocity:0.35 }, (time) => poly.triggerAttackRelease(chord, edur, time, 0.35), t + secPerBar * 0.5);
+        const edur = `${(secPerBar * 0.45).toFixed(3)}s`, ev1 = hVel(0.4), ev2 = hVel(0.35);
+        sched('chords', { notes:chord, duration:edur, velocity:ev1 }, (time) => poly.triggerAttackRelease(chord, edur, time, ev1), hTime(t));
+        sched('chords', { notes:chord, duration:edur, velocity:ev2 }, (time) => poly.triggerAttackRelease(chord, edur, time, ev2), hTime(t + secPerBar * 0.5));
       } else {
-        const cdur = `${(secPerBar * 0.95).toFixed(3)}s`;
-        sched('chords', { notes:chord, duration:cdur, velocity:0.35 }, (time) => poly.triggerAttackRelease(chord, cdur, time, 0.35), t);
+        const cdur = `${(secPerBar * 0.95).toFixed(3)}s`, cdv = hVel(0.35);
+        sched('chords', { notes:chord, duration:cdur, velocity:cdv }, (time) => poly.triggerAttackRelease(chord, cdur, time, cdv), hTime(t));
       }
 
       // Bass — genre-specific patterns
       if (isRock) {
         [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875].forEach(f => {
-          const bv = 0.5 + dynVel * 0.15;
-          sched('bass', { note:chord[0], duration:'16n', velocity:bv }, (time) => bass.triggerAttackRelease(chord[0], '16n', time, bv), t + secPerBar * f);
+          const bv = hVel(0.5 + dynVel * 0.15);
+          sched('bass', { note:chord[0], duration:'16n', velocity:bv }, (time) => bass.triggerAttackRelease(chord[0], '16n', time, bv), hTime(t + secPerBar * f));
         });
       } else if (isCountry) {
-        const b5 = chord[2] || chord[0];
-        sched('bass', { note:chord[0], duration:'8n', velocity:0.65 }, (time) => bass.triggerAttackRelease(chord[0], '8n', time, 0.65), t);
-        sched('bass', { note:b5, duration:'8n', velocity:0.55 }, (time) => bass.triggerAttackRelease(b5, '8n', time, 0.55), t + secPerBar * 0.5);
+        const b5 = chord[2] || chord[0], bv1 = hVel(0.65), bv2 = hVel(0.55);
+        sched('bass', { note:chord[0], duration:'8n', velocity:bv1 }, (time) => bass.triggerAttackRelease(chord[0], '8n', time, bv1), hTime(t));
+        sched('bass', { note:b5, duration:'8n', velocity:bv2 }, (time) => bass.triggerAttackRelease(b5, '8n', time, bv2), hTime(t + secPerBar * 0.5));
       } else if (isHipHop) {
-        const bldur = `${(secPerBar * 0.35).toFixed(3)}s`;
-        sched('bass', { note:chord[0], duration:bldur, velocity:0.6 }, (time) => bass.triggerAttackRelease(chord[0], bldur, time, 0.6), t);
-        sched('bass', { note:chord[0], duration:'16n', velocity:0.4 }, (time) => bass.triggerAttackRelease(chord[0], '16n', time, 0.4), t + secPerBar * 0.375);
+        const bldur = `${(secPerBar * 0.35).toFixed(3)}s`, bv1 = hVel(0.6), bv2 = hVel(0.4);
+        sched('bass', { note:chord[0], duration:bldur, velocity:bv1 }, (time) => bass.triggerAttackRelease(chord[0], bldur, time, bv1), hTime(t));
+        sched('bass', { note:chord[0], duration:'16n', velocity:bv2 }, (time) => bass.triggerAttackRelease(chord[0], '16n', time, bv2), hTime(t + secPerBar * 0.375));
       } else {
-        const b2 = chord[2] || chord[0];
-        sched('bass', { note:chord[0], duration:'8n', velocity:0.6 }, (time) => bass.triggerAttackRelease(chord[0], '8n', time, 0.6), t + secPerBar * 0.01);
-        sched('bass', { note:b2, duration:'8n', velocity:0.45 }, (time) => bass.triggerAttackRelease(b2, '8n', time, 0.45), t + secPerBar * 0.5);
+        const b2 = chord[2] || chord[0], bv1 = hVel(0.6), bv2 = hVel(0.45);
+        sched('bass', { note:chord[0], duration:'8n', velocity:bv1 }, (time) => bass.triggerAttackRelease(chord[0], '8n', time, bv1), hTime(t + secPerBar * 0.01));
+        sched('bass', { note:b2, duration:'8n', velocity:bv2 }, (time) => bass.triggerAttackRelease(b2, '8n', time, bv2), hTime(t + secPerBar * 0.5));
       }
 
       melodyMotif.forEach(m => {
-        sched('melody', { note:m.note, duration:'8n', velocity:0.55 }, (time) => melody.triggerAttackRelease(m.note, '8n', time, 0.55), t + m.time);
+        const mv = hVel(0.55);
+        sched('melody', { note:m.note, duration:'8n', velocity:mv }, (time) => melody.triggerAttackRelease(m.note, '8n', time, mv), hTime(t + m.time));
       });
 
       if (usePad && pad && bar % 2 === 0) {
         const padNotes = chord.slice(0, 2).map(n => Tone.Frequency(n).transpose(12).toNote());
-        const pdur = `${(secPerBar * 1.9).toFixed(3)}s`;
-        sched('pad', { notes:padNotes, duration:pdur, velocity:0.25 }, (time) => pad.triggerAttackRelease(padNotes, pdur, time, 0.25), t);
+        const pdur = `${(secPerBar * 1.9).toFixed(3)}s`, pv = hVel(0.25);
+        sched('pad', { notes:padNotes, duration:pdur, velocity:pv }, (time) => pad.triggerAttackRelease(padNotes, pdur, time, pv), hTime(t));
       }
 
       if (useArp && arp) {
         const arpBase = chord.map(n => Tone.Frequency(n).transpose(12).toNote());
         const arpExt = [...arpBase, ...arpBase.map(n => Tone.Frequency(n).transpose(12).toNote())];
         for (let i = 0; i < 8; i++) {
-          const av = 0.28 + dynVel * 0.12, an = arpExt[i % arpExt.length];
-          sched('arp', { note:an, duration:'16n', velocity:av }, (time) => arp.triggerAttackRelease(an, '16n', time, av), t + i * eighthSec);
+          const av = hVel(0.28 + dynVel * 0.12), an = arpExt[i % arpExt.length];
+          sched('arp', { note:an, duration:'16n', velocity:av }, (time) => arp.triggerAttackRelease(an, '16n', time, av), hTime(t + i * eighthSec));
         }
       }
 
@@ -919,15 +1022,19 @@ function scaleForMood(mood) {
 
 function applyTuning() {
   if (!generatedResult || !analysis) return player.clearTuning();
-  const autoTune = document.getElementById('autoTuneToggle').checked;
-  const quantize  = document.getElementById('quantizeToggle').checked;
-  if (!autoTune && !quantize) return player.clearTuning();
+  const autoTuneAmount = parseInt(document.getElementById('autoTuneToggle').value) / 100;
+  const quantizeAmount = parseInt(document.getElementById('quantizeToggle').value) / 100;
+  if (autoTuneAmount === 0 && quantizeAmount === 0) return player.clearTuning();
 
   const mood = moodEngine.resolve(moodSelect.value, analysis.mood);
   const targetScale = scaleForMood(mood);
-  const schedule = autoTune ? computePitchSchedule(analysis.pitchContour, analysis.key, targetScale) : null;
+  // Scale pitch corrections by autoTuneAmount (0 = no correction, 1 = full)
+  const rawSchedule = computePitchSchedule(analysis.pitchContour, analysis.key, targetScale);
+  const schedule = autoTuneAmount > 0 ? rawSchedule.map(e => ({ ...e, shift: e.shift * autoTuneAmount })) : null;
   const vocalBpm = typeof analysis.bpm === 'number' ? analysis.bpm : generatedResult.effectiveBpm;
-  const tempoRatio = quantize ? generatedResult.effectiveBpm / vocalBpm : 1;
+  // Lerp tempo ratio: 0% = ratio 1 (no change), 100% = full correction
+  const fullRatio = generatedResult.effectiveBpm / vocalBpm;
+  const tempoRatio = 1 + (fullRatio - 1) * quantizeAmount;
   player.setTuning(schedule, tempoRatio);
   debug.scheduleLen = schedule ? schedule.length : 0; setDebug();
 }
@@ -975,8 +1082,13 @@ function resetAll() {
 clearBtn.onclick = resetAll;
 document.getElementById('startOver2Btn').onclick = resetAll;
 document.getElementById('startOver3Btn').onclick = resetAll;
-document.getElementById('autoTuneToggle').onchange = applyTuning;
-document.getElementById('quantizeToggle').onchange  = applyTuning;
+const _wireSlider = (id, valId, cb) => {
+  const el = document.getElementById(id);
+  el.addEventListener('input', () => { document.getElementById(valId).textContent = el.value + '%'; if (cb) cb(); });
+};
+_wireSlider('autoTuneToggle',  'autoTuneVal',  applyTuning);
+_wireSlider('quantizeToggle',  'quantizeVal',  applyTuning);
+_wireSlider('humanizeToggle',  'humanizeVal',  null);
 const isPlaying = () => ['playingBacking', 'playingTogether'].includes(stateMachine.state);
 const regenIfIdle = () => { if (generatedResult && !isPlaying()) regenerate(); };
 moodSelect.onchange = () => { applyTuning(); regenIfIdle(); };
@@ -1031,7 +1143,8 @@ async function regenerate() {
     drums:  document.getElementById('drumKit').value,
   };
   try {
-    const res = await generator.generate(analysis, { mood, style, length: lengthSelect.value, instruments, bpmOverride });
+    const humanize = parseInt(document.getElementById('humanizeToggle').value) / 100;
+    const res = await generator.generate(analysis, { mood, style, length: lengthSelect.value, instruments, bpmOverride, humanize });
     generatedResult = res;
     document.getElementById('bpmInput').value = res.effectiveBpm;
     debug.backing = `generated (${res.bars} bars, ${res.totalSec.toFixed(1)}s, bpm:${res.effectiveBpm}, drums:${res.drumMode}, melody:${res.melodySource})`;
