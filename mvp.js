@@ -309,10 +309,19 @@ class PlaybackEngine {
       this._pitchShift = new Tone.PitchShift(0).toDestination();
       this._source.connect(this._pitchShift.input);
     } catch(e) {
-      // PitchShift (AudioWorklet) unavailable — connect directly to Tone's master output
       this._pitchShift = null;
-      const dest = Tone.getDestination();
-      this._source.connect(dest && dest.input ? dest.input : this._source.context.destination);
+      // Fallback 1: connect via Tone.js destination node
+      try {
+        const dest = Tone.getDestination();
+        this._source.connect(dest && dest.input ? dest.input : this._source.context.destination);
+      } catch(e2) {
+        // Fallback 2: native Web Audio bypass — avoid Tone.js graph lookup entirely
+        try {
+          const nativeSrc = this._source._nativeAudioNode;
+          const nativeDest = Tone.context.rawContext ? Tone.context.rawContext.destination : Tone.context.destination;
+          if (nativeSrc) nativeSrc.connect(nativeDest);
+        } catch(e3) {}
+      }
     }
   }
   setVoiceUrl(url) { this.voice.src = url; this._voiceWA.src = url; }
