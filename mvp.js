@@ -304,24 +304,17 @@ class PlaybackEngine {
   }
   _ensureAudioChain() {
     if (this._source) return;
-    this._source = Tone.context.createMediaElementSource(this._voiceWA);
+    // Use the native AudioContext directly so .connect() uses native Web Audio API,
+    // bypassing Tone.js's internal node-graph registry (which throws on unregistered nodes).
+    const nativeCtx = Tone.getContext().rawContext || Tone.context;
+    this._source = nativeCtx.createMediaElementSource(this._voiceWA);
     try {
       this._pitchShift = new Tone.PitchShift(0).toDestination();
-      this._source.connect(this._pitchShift.input);
+      // PitchShift.input is a Tone.js Gain; Gain.input is the native GainNode.
+      this._source.connect(this._pitchShift.input.input);
     } catch(e) {
       this._pitchShift = null;
-      // Fallback 1: connect via Tone.js destination node
-      try {
-        const dest = Tone.getDestination();
-        this._source.connect(dest && dest.input ? dest.input : this._source.context.destination);
-      } catch(e2) {
-        // Fallback 2: native Web Audio bypass — avoid Tone.js graph lookup entirely
-        try {
-          const nativeSrc = this._source._nativeAudioNode;
-          const nativeDest = Tone.context.rawContext ? Tone.context.rawContext.destination : Tone.context.destination;
-          if (nativeSrc) nativeSrc.connect(nativeDest);
-        } catch(e3) {}
-      }
+      try { this._source.connect(nativeCtx.destination); } catch(_) {}
     }
   }
   setVoiceUrl(url) { this.voice.src = url; this._voiceWA.src = url; }
