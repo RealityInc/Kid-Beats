@@ -258,31 +258,52 @@ class BackingTrackGenerator {
     const limiter = new Tone.Limiter(-1).toDestination();
     const bus = new Tone.Gain(0.85).chain(reverb, delay, limiter);
 
+    // Per-instrument channel gains — toggled to mute individual tracks
+    const melCh    = new Tone.Gain(1);
+    const bassCh   = new Tone.Gain(1);
+    const chordsCh = new Tone.Gain(1);
+    const kickCh   = new Tone.Gain(1);
+    const percCh   = new Tone.Gain(1);   // shared by snare + hat
+    const padCh    = usePad ? new Tone.Gain(1) : null;
+    const arpCh    = useArp ? new Tone.Gain(1) : null;
+
     // Melody vibrato — gentle pitch wobble for spooky/sad expressiveness
     const vibrato = (mood === 'spooky' || mood === 'sad') ? new Tone.Vibrato({ frequency: 4.5, depth: 0.15 }) : null;
-    if (vibrato) { melody.chain(vibrato, bus); } else { melody.connect(bus); }
+    if (vibrato) { melody.chain(melCh, vibrato, bus); } else { melody.chain(melCh, bus); }
 
     // Distortion — grit for rock (shared across poly + bass into bus)
     const dist = isRock ? new Tone.Distortion(0.35) : null;
-    if (dist) { poly.connect(dist); bass.connect(dist); dist.connect(bus); } else { poly.connect(bus); bass.connect(bus); }
+    if (dist) { poly.chain(chordsCh, dist); bass.chain(bassCh, dist); dist.connect(bus); }
+    else      { poly.chain(chordsCh, bus);  bass.chain(bassCh, bus); }
 
-    hat.connect(bus); snare.connect(bus); drum.connect(limiter);
+    hat.chain(percCh, bus); snare.chain(percCh, bus); drum.chain(kickCh, limiter);
 
     // Pad routes through an extra lush reverb for depth
     const padReverb = usePad ? new Tone.Reverb({ decay: 6.0, wet: 0.55 }) : null;
     const padGain = usePad ? new Tone.Gain(0.28).chain(padReverb, limiter) : null;
-    if (pad && padGain) pad.connect(padGain);
-    if (arp) arp.connect(bus);
+    if (pad && padGain) { padCh ? pad.chain(padCh, padGain) : pad.connect(padGain); }
+    if (arp) { arpCh ? arp.chain(arpCh, bus) : arp.connect(bus); }
     if (openHat) openHat.connect(bus);
 
-    this._nodes = [drum, snare, hat, bass, poly, melody, reverb, delay, limiter, bus];
+    this._nodes = [drum, snare, hat, bass, poly, melody, reverb, delay, limiter, bus,
+                   melCh, bassCh, chordsCh, kickCh, percCh];
     if (vibrato) this._nodes.push(vibrato);
     if (dist) this._nodes.push(dist);
+    if (padCh) this._nodes.push(padCh);
+    if (arpCh) this._nodes.push(arpCh);
     if (pad) this._nodes.push(pad);
     if (padReverb) this._nodes.push(padReverb);
     if (padGain) this._nodes.push(padGain);
     if (arp) this._nodes.push(arp);
     if (openHat) this._nodes.push(openHat);
+
+    // Note event capture — powers the track view piano roll and note editing
+    const tracks = { melody: [], bass: [], chords: [], kick: [], snare: [], hat: [], pad: [], arp: [] };
+    const sched = (trackId, meta, cb, time) => {
+      const evId = Tone.Transport.schedule(cb, time);
+      if (trackId) tracks[trackId].push({ evId, time: typeof time === 'number' ? time : 0, ...meta });
+      return evId;
+    };
 
     const rootMap = { C:'C2','C#':'C#2',D:'D2','D#':'D#2',E:'E2',F:'F2','F#':'F#2',G:'G2','G#':'G#2',A:'A2','A#':'A#2',B:'B2' };
     const root = rootMap[analysis.key] || 'C2';
@@ -350,72 +371,344 @@ class BackingTrackGenerator {
       const dynVel = Math.max(0.25, Math.min(1.0, barE / Math.max(avgEnergy * 1.2, 0.001)));
       const chord = prog[bar % prog.length].map((n) => Tone.Frequency(root).transpose(n).toNote());
 
-      kickBeats.forEach(f => Tone.Transport.schedule((time) => drum.triggerAttackRelease('C1', isHipHop ? '4n' : '8n', time, 0.65 + dynVel * 0.3), t + secPerBar * f));
-      snareBeats.forEach(f => Tone.Transport.schedule((time) => snare.triggerAttackRelease('8n', time, isCountry ? 0.12 + dynVel * 0.1 : 0.25 + dynVel * 0.2), t + secPerBar * f));
-      hatBeats.forEach(f => Tone.Transport.schedule((time) => hat.triggerAttackRelease('16n', time, 0.08 + dynVel * 0.15), t + secPerBar * f));
+      kickBeats.forEach(f => {
+        const st = t + secPerBar * f, kdur = isHipHop ? '4n' : '8n', kv = 0.65 + dynVel * 0.3;
+        sched('kick', { note:'C1', duration:kdur, velocity:kv }, (time) => drum.triggerAttackRelease('C1', kdur, time, kv), st);
+      });
+      snareBeats.forEach(f => {
+        const st = t + secPerBar * f, sv = isCountry ? 0.12 + dynVel * 0.1 : 0.25 + dynVel * 0.2;
+        sched('snare', { duration:'8n', velocity:sv }, (time) => snare.triggerAttackRelease('8n', time, sv), st);
+      });
+      hatBeats.forEach(f => {
+        const st = t + secPerBar * f, hv = 0.08 + dynVel * 0.15;
+        sched('hat', { duration:'16n', velocity:hv }, (time) => hat.triggerAttackRelease('16n', time, hv), st);
+      });
 
       // Chords — genre-specific patterns
       if (isHipHop) {
-        Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord, '4n', time, 0.3), t);
-        Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord, '8n', time, 0.22), t + secPerBar * 0.375);
+        sched('chords', { notes:chord, duration:'4n', velocity:0.3 }, (time) => poly.triggerAttackRelease(chord, '4n', time, 0.3), t);
+        sched('chords', { notes:chord, duration:'8n', velocity:0.22 }, (time) => poly.triggerAttackRelease(chord, '8n', time, 0.22), t + secPerBar * 0.375);
       } else if (isCountry) {
-        // Boom-chick: chord strums on beats 2 and 4
-        Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord.slice(0, 2), '8n', time, 0.32), t + secPerBar * 0.25);
-        Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord.slice(0, 2), '8n', time, 0.32), t + secPerBar * 0.75);
+        const strm = chord.slice(0, 2);
+        sched('chords', { notes:strm, duration:'8n', velocity:0.32 }, (time) => poly.triggerAttackRelease(strm, '8n', time, 0.32), t + secPerBar * 0.25);
+        sched('chords', { notes:strm, duration:'8n', velocity:0.32 }, (time) => poly.triggerAttackRelease(strm, '8n', time, 0.32), t + secPerBar * 0.75);
       } else if (isRock) {
-        // Punchy stabs on every beat
-        [0, 0.25, 0.5, 0.75].forEach(f => Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord, '16n', time, 0.38), t + secPerBar * f));
+        [0, 0.25, 0.5, 0.75].forEach(f =>
+          sched('chords', { notes:chord, duration:'16n', velocity:0.38 }, (time) => poly.triggerAttackRelease(chord, '16n', time, 0.38), t + secPerBar * f));
       } else if (mood === 'epic') {
-        // Epic: sustained hits every half bar
-        Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord, `${secPerBar * 0.45}s`, time, 0.4), t);
-        Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord, `${secPerBar * 0.45}s`, time, 0.35), t + secPerBar * 0.5);
+        const edur = `${(secPerBar * 0.45).toFixed(3)}s`;
+        sched('chords', { notes:chord, duration:edur, velocity:0.4 }, (time) => poly.triggerAttackRelease(chord, edur, time, 0.4), t);
+        sched('chords', { notes:chord, duration:edur, velocity:0.35 }, (time) => poly.triggerAttackRelease(chord, edur, time, 0.35), t + secPerBar * 0.5);
       } else {
-        Tone.Transport.schedule((time) => poly.triggerAttackRelease(chord, `${secPerBar * 0.95}s`, time, 0.35), t);
+        const cdur = `${(secPerBar * 0.95).toFixed(3)}s`;
+        sched('chords', { notes:chord, duration:cdur, velocity:0.35 }, (time) => poly.triggerAttackRelease(chord, cdur, time, 0.35), t);
       }
 
       // Bass — genre-specific patterns
       if (isRock) {
-        // Driving 8th notes
-        [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875].forEach(f =>
-          Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[0], '16n', time, 0.5 + dynVel * 0.15), t + secPerBar * f));
+        [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875].forEach(f => {
+          const bv = 0.5 + dynVel * 0.15;
+          sched('bass', { note:chord[0], duration:'16n', velocity:bv }, (time) => bass.triggerAttackRelease(chord[0], '16n', time, bv), t + secPerBar * f);
+        });
       } else if (isCountry) {
-        // Boom-chick bass: root on 1 and 3, 5th on 2 and 4
-        Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[0], '8n', time, 0.65), t);
-        Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[2] || chord[0], '8n', time, 0.55), t + secPerBar * 0.5);
+        const b5 = chord[2] || chord[0];
+        sched('bass', { note:chord[0], duration:'8n', velocity:0.65 }, (time) => bass.triggerAttackRelease(chord[0], '8n', time, 0.65), t);
+        sched('bass', { note:b5, duration:'8n', velocity:0.55 }, (time) => bass.triggerAttackRelease(b5, '8n', time, 0.55), t + secPerBar * 0.5);
       } else if (isHipHop) {
-        // Long root + syncopated hit
-        Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[0], `${secPerBar * 0.35}s`, time, 0.6), t);
-        Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[0], '16n', time, 0.4), t + secPerBar * 0.375);
+        const bldur = `${(secPerBar * 0.35).toFixed(3)}s`;
+        sched('bass', { note:chord[0], duration:bldur, velocity:0.6 }, (time) => bass.triggerAttackRelease(chord[0], bldur, time, 0.6), t);
+        sched('bass', { note:chord[0], duration:'16n', velocity:0.4 }, (time) => bass.triggerAttackRelease(chord[0], '16n', time, 0.4), t + secPerBar * 0.375);
       } else {
-        Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[0], '8n', time + secPerBar * 0.01, 0.6), t);
-        Tone.Transport.schedule((time) => bass.triggerAttackRelease(chord[2], '8n', time + secPerBar * 0.5, 0.45), t);
+        const b2 = chord[2] || chord[0];
+        sched('bass', { note:chord[0], duration:'8n', velocity:0.6 }, (time) => bass.triggerAttackRelease(chord[0], '8n', time, 0.6), t + secPerBar * 0.01);
+        sched('bass', { note:b2, duration:'8n', velocity:0.45 }, (time) => bass.triggerAttackRelease(b2, '8n', time, 0.45), t + secPerBar * 0.5);
       }
 
-      melodyMotif.forEach(m => Tone.Transport.schedule((time) => melody.triggerAttackRelease(m.note, '8n', time, 0.55), t + m.time));
+      melodyMotif.forEach(m => {
+        sched('melody', { note:m.note, duration:'8n', velocity:0.55 }, (time) => melody.triggerAttackRelease(m.note, '8n', time, 0.55), t + m.time);
+      });
 
-      // Atmospheric pad — sustained chord tones every 2 bars
       if (usePad && pad && bar % 2 === 0) {
         const padNotes = chord.slice(0, 2).map(n => Tone.Frequency(n).transpose(12).toNote());
-        Tone.Transport.schedule((time) => pad.triggerAttackRelease(padNotes, `${secPerBar * 1.9}s`, time, 0.25), t);
+        const pdur = `${(secPerBar * 1.9).toFixed(3)}s`;
+        sched('pad', { notes:padNotes, duration:pdur, velocity:0.25 }, (time) => pad.triggerAttackRelease(padNotes, pdur, time, 0.25), t);
       }
 
-      // Arp — ascending chord tones for energetic moods
       if (useArp && arp) {
         const arpBase = chord.map(n => Tone.Frequency(n).transpose(12).toNote());
         const arpExt = [...arpBase, ...arpBase.map(n => Tone.Frequency(n).transpose(12).toNote())];
         for (let i = 0; i < 8; i++) {
-          Tone.Transport.schedule((time) => arp.triggerAttackRelease(arpExt[i % arpExt.length], '16n', time, 0.28 + dynVel * 0.12), t + i * eighthSec);
+          const av = 0.28 + dynVel * 0.12, an = arpExt[i % arpExt.length];
+          sched('arp', { note:an, duration:'16n', velocity:av }, (time) => arp.triggerAttackRelease(an, '16n', time, av), t + i * eighthSec);
         }
       }
 
-      // Open-hat shimmer — metallic breath on odd bars, beat 3.5
       if (useOpenHat && openHat && bar % 2 === 1) {
         Tone.Transport.schedule((time) => openHat.triggerAttackRelease('16n', time, 0.14), t + secPerBar * 0.75);
       }
     }
     Tone.Transport.swing = isHipHop ? 0.2 : (is4OnFloor || isRock) ? 0.02 : isCountry ? 0.06 : 0.08;
     Tone.Transport.schedule(() => Tone.Transport.stop(), totalSec);
-    return { bars, totalSec, effectiveBpm, drumMode: isHalfTime ? 'half-time' : isDoubletime ? 'double-time' : 'standard', melodySource };
+    const channels = { melody:melCh, bass:bassCh, chords:chordsCh, kick:kickCh, perc:percCh,
+                       ...(padCh ? {pad:padCh} : {}), ...(arpCh ? {arp:arpCh} : {}) };
+    const synths = { melody, bass, poly };
+    return { bars, totalSec, effectiveBpm, drumMode: isHalfTime ? 'half-time' : isDoubletime ? 'double-time' : 'standard', melodySource, tracks, channels, synths, scalePcs };
+  }
+}
+
+// ── Track view helpers ──────────────────────────────────────────────────────
+
+const TRACK_DEFS = [
+  { id:'melody', label:'🎵 Melody',  color:'#4a9eff', pitched:true  },
+  { id:'bass',   label:'🎸 Bass',    color:'#ff7c4a', pitched:true  },
+  { id:'chords', label:'🎹 Chords',  color:'#a64aff', pitched:true  },
+  { id:'kick',   label:'🥁 Kick',    color:'#ff4a7a', pitched:false },
+  { id:'snare',  label:'🥁 Snare',   color:'#ffaa40', pitched:false },
+  { id:'hat',    label:'🎩 Hi-Hat',  color:'#ffe040', pitched:false },
+  { id:'pad',    label:'🌊 Pad',     color:'#40ffd0', pitched:true  },
+  { id:'arp',    label:'✨ Arp',     color:'#ff40cc', pitched:true  },
+];
+
+function parseDurSec(dur, bpm) {
+  if (!dur) return 0.1;
+  if (typeof dur === 'string' && dur.endsWith('s')) return parseFloat(dur);
+  const b = 60 / bpm;
+  if (dur === '1n') return b * 4; if (dur === '2n') return b * 2;
+  if (dur === '4n') return b;     if (dur === '8n') return b / 2;
+  if (dur === '16n') return b / 4; return 0.1;
+}
+
+function drawTrackCanvas(cv, events, def, totalSec, bpm) {
+  const W = cv.width, H = cv.height;
+  if (!W || !H) return;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#0d1018'; ctx.fillRect(0, 0, W, H);
+  const pps = W / totalSec, beatSec = 60 / bpm, barSec = beatSec * 4;
+  // Bar + beat grid
+  for (let t = 0; t <= totalSec + 0.01; t += beatSec) {
+    ctx.strokeStyle = (t % barSec < 0.01) ? '#252d40' : '#181f30';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(t * pps, 0); ctx.lineTo(t * pps, H); ctx.stroke();
+  }
+  if (!def.pitched) {
+    ctx.fillStyle = def.color;
+    for (const ev of events) { const x = ev.time * pps; ctx.fillRect(x - 1.5, 2, 3, H - 4); }
+    return;
+  }
+  const allMidis = events.flatMap(ev => (ev.notes ?? (ev.note ? [ev.note] : []))
+    .map(n => { try { return Tone.Frequency(n).toMidi(); } catch { return NaN; } })).filter(m => !isNaN(m));
+  if (!allMidis.length) return;
+  const minM = Math.min(...allMidis) - 2, maxM = Math.max(...allMidis) + 2;
+  const mRange = Math.max(1, maxM - minM), noteH = Math.max(3, (H - 6) / mRange);
+  ctx.fillStyle = def.color;
+  for (const ev of events) {
+    const x = ev.time * pps, w = Math.max(3, parseDurSec(ev.duration, bpm) * pps - 1);
+    const evNotes = (ev.notes ?? (ev.note ? [ev.note] : []))
+      .map(n => { try { return Tone.Frequency(n).toMidi(); } catch { return NaN; } }).filter(m => !isNaN(m));
+    for (const m of evNotes) {
+      const y = H - 4 - ((m - minM) / mRange) * (H - 8);
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(x, y - noteH / 2, w, noteH, 1); else ctx.rect(x, y - noteH / 2, w, noteH);
+      ctx.fill();
+    }
+  }
+}
+
+// ── TrackView ────────────────────────────────────────────────────────────────
+
+class TrackView {
+  constructor(el) { this._el = el; this._result = null; this._muted = {}; }
+
+  setData(result) {
+    this._result = result;
+    this._muted = {};
+    if (result?.channels) Object.values(result.channels).forEach(ch => { if (ch) ch.gain.value = 1; });
+    this._render();
+  }
+
+  _render() {
+    this._el.innerHTML = '';
+    if (!this._result?.tracks) return;
+    const { tracks, totalSec, scalePcs, effectiveBpm } = this._result;
+    for (const def of TRACK_DEFS) {
+      if (!tracks[def.id]?.length) continue;
+      this._el.appendChild(this._makeLane(def, tracks[def.id], totalSec, scalePcs, effectiveBpm));
+    }
+  }
+
+  _makeLane(def, events, totalSec, scalePcs, bpm) {
+    const lane = document.createElement('div');
+    lane.className = 'track-lane';
+    const hdr = document.createElement('div');
+    hdr.className = 'track-hdr';
+    const muteBtn = document.createElement('button');
+    muteBtn.className = 'mute-btn';
+    muteBtn.textContent = 'M';
+    muteBtn.title = 'Mute';
+    muteBtn.onclick = () => {
+      const muted = !this._muted[def.id]; this._muted[def.id] = muted;
+      muteBtn.classList.toggle('muted', muted);
+      const chKey = (def.id === 'snare' || def.id === 'hat') ? 'perc' : def.id;
+      const ch = this._result?.channels?.[chKey];
+      if (ch) ch.gain.setValueAtTime(muted ? 0 : 1, Tone.now());
+    };
+    const lbl = document.createElement('span');
+    lbl.className = 'track-label'; lbl.textContent = def.label;
+    hdr.append(muteBtn, lbl);
+    const cv = document.createElement('canvas');
+    cv.className = 'track-canvas'; cv.height = def.pitched ? 52 : 24;
+    lane.append(hdr, cv);
+    requestAnimationFrame(() => {
+      cv.width = cv.offsetWidth || 560;
+      drawTrackCanvas(cv, events, def, totalSec, bpm);
+      cv.onclick = (e) => this._onCanvasClick(e, cv, events, def, totalSec, scalePcs, bpm);
+    });
+    return lane;
+  }
+
+  _onCanvasClick(e, cv, events, def, totalSec, scalePcs, bpm) {
+    const rect = cv.getBoundingClientRect();
+    const clickT = ((e.clientX - rect.left) / rect.width) * totalSec;
+    if (!def.pitched) {
+      // Drums: click to remove hit (nearest within 15% of a beat)
+      const thr = (60 / bpm) * 0.15;
+      const idx = events.findIndex(ev => Math.abs(ev.time - clickT) < thr);
+      if (idx >= 0) {
+        if (events[idx].evId !== undefined) Tone.Transport.clear(events[idx].evId);
+        events.splice(idx, 1);
+        cv.width = cv.offsetWidth || 560; drawTrackCanvas(cv, events, def, totalSec, bpm);
+      }
+      return;
+    }
+    let best = null, bestD = Infinity;
+    for (const ev of events) { const d = Math.abs(ev.time - clickT); if (d < bestD) { bestD = d; best = ev; } }
+    if (!best || bestD > (60 / bpm) * 0.5) return;
+    this._showPitchPopup(e, cv, best, events, def, totalSec, scalePcs, bpm);
+  }
+
+  _showPitchPopup(e, cv, ev, events, def, totalSec, scalePcs, bpm) {
+    document.getElementById('note-popup')?.remove();
+    const popup = document.createElement('div');
+    popup.id = 'note-popup'; popup.className = 'note-popup';
+    const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+    const sel = document.createElement('select');
+    const currentNote = ev.note ?? (Array.isArray(ev.notes) ? ev.notes[0] : null);
+    for (const oct of [2, 3, 4, 5]) {
+      for (const pc of (scalePcs || [])) {
+        const n = NOTE_NAMES[pc % 12] + oct;
+        const opt = document.createElement('option');
+        opt.value = n; opt.textContent = n;
+        if (n === currentNote) opt.selected = true;
+        sel.appendChild(opt);
+      }
+    }
+    const synth = this._result?.synths?.[def.id];
+    sel.onchange = () => {
+      const newNote = sel.value;
+      if (ev.evId !== undefined) Tone.Transport.clear(ev.evId);
+      if (synth) {
+        const newId = Tone.Transport.schedule((time) => synth.triggerAttackRelease(newNote, ev.duration || '8n', time, ev.velocity || 0.5), ev.time);
+        ev.evId = newId;
+      }
+      ev.note = newNote;
+      if (ev.notes?.length) ev.notes[0] = newNote;
+      cv.width = cv.offsetWidth || 560; drawTrackCanvas(cv, events, def, totalSec, bpm);
+      popup.remove();
+    };
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = '✕'; closeBtn.onclick = () => popup.remove();
+    popup.append(sel, closeBtn);
+    popup.style.cssText = `position:fixed;left:${Math.min(e.clientX, window.innerWidth - 180)}px;top:${e.clientY - 10}px;`;
+    document.body.appendChild(popup);
+    const dismiss = (ev2) => { if (!popup.contains(ev2.target)) { popup.remove(); document.removeEventListener('click', dismiss); } };
+    setTimeout(() => document.addEventListener('click', dismiss), 60);
+  }
+
+  snapshot() {
+    if (!this._result) return null;
+    const { tracks, totalSec, effectiveBpm, scalePcs } = this._result;
+    return {
+      tracks: JSON.parse(JSON.stringify(tracks)),
+      totalSec, effectiveBpm, scalePcs,
+    };
+  }
+}
+
+// ── MasterTimeline ────────────────────────────────────────────────────────────
+
+class MasterTimeline {
+  constructor(el) { this._el = el; this._loops = []; this._nextId = 1; this._dragId = null; }
+
+  add(label, snap) {
+    this._loops.push({ id: `loop-${this._nextId++}`, label, snap });
+    this._render();
+  }
+
+  _render() {
+    this._el.innerHTML = '';
+    if (!this._loops.length) {
+      this._el.innerHTML = '<div class="muted" style="padding:18px;text-align:center;">No loops saved yet — generate a backing track and click "+ Save to Timeline".</div>';
+      return;
+    }
+    for (const loop of this._loops) this._el.appendChild(this._makeBlock(loop));
+  }
+
+  _makeBlock(loop) {
+    const block = document.createElement('div');
+    block.className = 'timeline-block'; block.draggable = true; block.dataset.id = loop.id;
+    block.addEventListener('dragstart', (e) => { this._dragId = loop.id; block.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
+    block.addEventListener('dragend', () => { block.classList.remove('dragging'); this._dragId = null; });
+    block.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; });
+    block.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (!this._dragId || this._dragId === loop.id) return;
+      const fi = this._loops.findIndex(l => l.id === this._dragId);
+      const ti = this._loops.findIndex(l => l.id === loop.id);
+      if (fi < 0 || ti < 0) return;
+      const [m] = this._loops.splice(fi, 1); this._loops.splice(ti, 0, m);
+      this._render();
+    });
+
+    const hdr = document.createElement('div'); hdr.className = 'block-hdr';
+    const grip = document.createElement('span'); grip.textContent = '⠿'; grip.className = 'block-grip'; grip.title = 'Drag to reorder';
+    const lbl = document.createElement('span'); lbl.textContent = loop.label; lbl.className = 'block-label';
+    const meta = document.createElement('span'); meta.className = 'block-meta muted';
+    meta.textContent = `${loop.snap.totalSec.toFixed(1)}s · ${Math.round(loop.snap.effectiveBpm)} BPM`;
+    const expandBtn = document.createElement('button'); expandBtn.textContent = '▼ Tracks'; expandBtn.className = 'block-expand-btn';
+    const delBtn = document.createElement('button'); delBtn.textContent = '✕'; delBtn.className = 'block-del-btn'; delBtn.title = 'Remove';
+    delBtn.onclick = (e) => { e.stopPropagation(); this._loops = this._loops.filter(l => l.id !== loop.id); this._render(); };
+    hdr.append(grip, lbl, meta, expandBtn, delBtn);
+    block.appendChild(hdr);
+
+    const tracksPanel = document.createElement('div'); tracksPanel.className = 'block-tracks'; tracksPanel.style.display = 'none';
+    block.appendChild(tracksPanel);
+
+    expandBtn.onclick = () => {
+      const open = tracksPanel.style.display !== 'none';
+      tracksPanel.style.display = open ? 'none' : 'block';
+      expandBtn.textContent = open ? '▼ Tracks' : '▲ Tracks';
+      if (!open && !tracksPanel.dataset.rendered) {
+        this._renderSnapTracks(tracksPanel, loop.snap);
+        tracksPanel.dataset.rendered = '1';
+      }
+    };
+    return block;
+  }
+
+  _renderSnapTracks(container, snap) {
+    for (const def of TRACK_DEFS) {
+      const events = snap.tracks[def.id];
+      if (!events?.length) continue;
+      const lane = document.createElement('div'); lane.className = 'track-lane track-lane--mini';
+      const hdr = document.createElement('div'); hdr.className = 'track-hdr';
+      hdr.innerHTML = `<span class="track-label">${def.label}</span>`;
+      const cv = document.createElement('canvas'); cv.className = 'track-canvas'; cv.height = def.pitched ? 36 : 18;
+      lane.append(hdr, cv); container.appendChild(lane);
+      requestAnimationFrame(() => {
+        cv.width = cv.offsetWidth || 440;
+        drawTrackCanvas(cv, events, def, snap.totalSec, snap.effectiveBpm);
+      });
+    }
   }
 }
 
@@ -544,7 +837,10 @@ const moodEngine = new MoodPresetEngine();
 const styleEngine = new StylePresetEngine();
 const generator = new BackingTrackGenerator();
 const player = new PlaybackEngine();
+const trackView = new TrackView(document.getElementById('track-lanes'));
+const masterTimeline = new MasterTimeline(document.getElementById('timeline-list'));
 let recordTimer = null, recordStart = 0, chunks = [], vocalBlob = null, vocalUrl = null, analysis = null, generatedResult = null;
+let loopCounter = 1;
 
 function computePitchSchedule(pitchContour, key, scale) {
   const scaleIntervals = { major: [0,2,4,5,7,9,11], minor: [0,2,3,5,7,8,10] };
@@ -617,6 +913,8 @@ function resetAll() {
   timerEl.textContent = '0.0s';
   document.getElementById('playVoiceBtn').disabled = true;
   document.getElementById('analyzeBtn').disabled = true;
+  document.getElementById('track-view-wrap').style.display = 'none';
+  trackView.setData(null);
   stateMachine.set('idle');
   setStatus('Cleared.');
   showScreen('screen-input');
@@ -689,6 +987,8 @@ async function regenerate() {
     stateMachine.set('generated');
     showScreen('screen-generated');
     applyTuning();
+    trackView.setData(res);
+    document.getElementById('track-view-wrap').style.display = 'block';
   } catch (err) {
     debug.backing = 'error: ' + err.message; setDebug();
     stateMachine.set('analyzed');
@@ -702,3 +1002,12 @@ playVoice2Btn.onclick = async () => { try { await player.playVoice(); debug.play
 playBackingBtn.onclick = ()=>{ stateMachine.set('playingBacking'); player.playBacking(); };
 playTogetherBtn.onclick = ()=>{ stateMachine.set('playingTogether'); player.playTogether(); debug.pitchChain=player.chainMode; setDebug(); };
 stopPlaybackBtn.onclick = ()=>{ stateMachine.set('stopped'); player.stop(); debug.playback='stopped'; setDebug(); };
+document.getElementById('addToTimelineBtn').onclick = () => {
+  const snap = trackView.snapshot();
+  if (!snap) return;
+  const mood = moodSelect.value !== 'Auto' ? moodSelect.value : (analysis?.mood ?? 'loop');
+  const style = styleSelect.value !== 'Auto' ? styleSelect.value : '';
+  const label = `Loop ${loopCounter++} · ${mood}${style ? ' · ' + style : ''}`;
+  masterTimeline.add(label, snap);
+  document.getElementById('timeline-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
