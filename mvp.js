@@ -301,6 +301,7 @@ class PlaybackEngine {
     this._voiceWA = new Audio();
     this._source = null; this._pitchShift = null; this._rafId = null;
     this._rateCompensation = 0; this._pitchSchedule = null;
+    this.chainMode = 'uninitialized';
   }
   _ensureAudioChain() {
     if (this._source) return;
@@ -312,9 +313,10 @@ class PlaybackEngine {
       this._pitchShift = new Tone.PitchShift(0).toDestination();
       // PitchShift.input is a Tone.js Gain; Gain.input is the native GainNode.
       this._source.connect(this._pitchShift.input.input);
+      this.chainMode = 'pitchShift';
     } catch(e) {
       this._pitchShift = null;
-      try { this._source.connect(nativeCtx.destination); } catch(_) {}
+      try { this._source.connect(nativeCtx.destination); this.chainMode = 'nativeDest'; } catch(_) { this.chainMode = 'error'; }
     }
   }
   setVoiceUrl(url) { this.voice.src = url; this._voiceWA.src = url; }
@@ -329,13 +331,19 @@ class PlaybackEngine {
   }
   _startPitchTracking() {
     this._stopPitchTracking();
-    if (!this._pitchSchedule || !this._pitchShift) return;
-    let i = 0;
-    const schedule = this._pitchSchedule;
+    if (!this._pitchShift) return;
+    let i = 0, lastSched = null;
     const loop = () => {
-      const t = this._voiceWA.currentTime;
-      while (i < schedule.length - 1 && schedule[i + 1].time <= t) i++;
-      if (schedule.length) this._pitchShift.pitch = schedule[i].shift + this._rateCompensation;
+      const sched = this._pitchSchedule;
+      // Reset index when schedule changes (e.g. mood changed mid-playback)
+      if (sched !== lastSched) { i = 0; lastSched = sched; }
+      if (sched && sched.length) {
+        const t = this._voiceWA.currentTime;
+        while (i < sched.length - 1 && sched[i + 1].time <= t) i++;
+        this._pitchShift.pitch = sched[i].shift + this._rateCompensation;
+      } else {
+        this._pitchShift.pitch = this._rateCompensation;
+      }
       if (!this._voiceWA.paused) this._rafId = requestAnimationFrame(loop);
     };
     this._rafId = requestAnimationFrame(loop);
@@ -389,7 +397,7 @@ const lengthSelect = document.getElementById('lengthSelect');
 const statusEl = document.getElementById('status');
 const timerEl = document.getElementById('timer');
 const stateEl = document.getElementById('state');
-const debug = { micPermission: 'unknown', selectedMimeType: '-', blobSize: 0, audioUrl: '-', decode: '-', analysis: '-', backing: '-', playback: '-', context: '-' };
+const debug = { micPermission: 'unknown', selectedMimeType: '-', blobSize: 0, audioUrl: '-', decode: '-', analysis: '-', backing: '-', playback: '-', context: '-', pitchChain: '-', scheduleLen: 0 };
 const setDebug = () => debugEl.textContent = JSON.stringify(debug, null, 2);
 setDebug();
 
@@ -434,6 +442,7 @@ function applyTuning() {
   const schedule = computePitchSchedule(analysis.pitchContour, analysis.key, targetScale);
   const vocalBpm = typeof analysis.bpm === 'number' ? analysis.bpm : generatedResult.effectiveBpm;
   player.setTuning(schedule, generatedResult.effectiveBpm / vocalBpm);
+  debug.scheduleLen = schedule.length; setDebug();
 }
 
 function showScreen(id) { document.querySelectorAll('.screen').forEach((s)=>s.classList.remove('active')); document.getElementById(id).classList.add('active'); }
@@ -539,5 +548,5 @@ regenerateBtn.onclick = regenerate;
 backToAnalysisBtn.onclick = ()=>showScreen('screen-analysis');
 playVoice2Btn.onclick = async () => { try { await player.playVoice(); debug.playback='voice'; } catch(e) { debug.playback='error: '+(e?.message||e); } setDebug(); };
 playBackingBtn.onclick = ()=>{ stateMachine.set('playingBacking'); player.playBacking(); };
-playTogetherBtn.onclick = ()=>{ stateMachine.set('playingTogether'); player.playTogether(); };
+playTogetherBtn.onclick = ()=>{ stateMachine.set('playingTogether'); player.playTogether(); setTimeout(()=>{ debug.pitchChain=player.chainMode; setDebug(); },200); };
 stopPlaybackBtn.onclick = ()=>{ stateMachine.set('stopped'); player.stop(); debug.playback='stopped'; setDebug(); };
