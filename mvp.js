@@ -350,32 +350,44 @@ class BackingTrackGenerator {
     const padCh    = usePad ? new Tone.Gain(1) : null;
     const arpCh    = useArp ? new Tone.Gain(1) : null;
 
+    // Stereo panners — place instruments across the field for mix clarity
+    const panMel    = new Tone.Panner(-0.25);   // melody slightly left
+    const panChords = new Tone.Panner(-0.15);   // chords just left of center
+    const panPerc   = new Tone.Panner(0.3);     // hi-hat/snare slightly right
+    const panArp    = arpCh ? new Tone.Panner(0.35) : null; // arp slightly right
+    // Bass and kick stay center (0) — no panner needed for those
+
     // Melody vibrato — gentle pitch wobble for spooky/sad expressiveness
     const vibrato = (mood === 'spooky' || mood === 'sad') ? new Tone.Vibrato({ frequency: 4.5, depth: 0.15 }) : null;
     // Use explicit connect() throughout — chain() on shared nodes (percCh) would
     // register percCh→bus twice in Tone.js's internal graph, causing silent failure.
-    melody.connect(melCh);
-    if (vibrato) { melCh.connect(vibrato); vibrato.connect(bus); } else { melCh.connect(bus); }
+    melody.connect(melCh); melCh.connect(panMel);
+    if (vibrato) { panMel.connect(vibrato); vibrato.connect(bus); } else { panMel.connect(bus); }
 
     // Distortion — grit for rock (shared across poly + bass into bus)
     const dist = isRock ? new Tone.Distortion(0.35) : null;
-    poly.connect(chordsCh); bass.connect(bassCh);
-    if (dist) { chordsCh.connect(dist); bassCh.connect(dist); dist.connect(bus); }
-    else      { chordsCh.connect(bus);  bassCh.connect(bus); }
+    poly.connect(chordsCh); chordsCh.connect(panChords); bass.connect(bassCh);
+    if (dist) { panChords.connect(dist); bassCh.connect(dist); dist.connect(bus); }
+    else      { panChords.connect(bus);  bassCh.connect(bus); }
 
     // Snare + hat share percCh — connect each source separately, bus once
-    hat.connect(percCh); snare.connect(percCh); percCh.connect(bus);
+    hat.connect(percCh); snare.connect(percCh); percCh.connect(panPerc); panPerc.connect(bus);
     drum.connect(kickCh); kickCh.connect(limiter);
 
     // Pad routes through an extra lush reverb for depth
     const padReverb = usePad ? new Tone.Reverb({ decay: 6.0, wet: 0.55 }) : null;
     const padGain = usePad ? new Tone.Gain(0.28).chain(padReverb, limiter) : null;
     if (pad && padGain) { padCh ? pad.chain(padCh, padGain) : pad.connect(padGain); }
-    if (arp) { arpCh ? arp.chain(arpCh, bus) : arp.connect(bus); }
+    if (arp) {
+      if (arpCh && panArp) { arp.connect(arpCh); arpCh.connect(panArp); panArp.connect(bus); }
+      else if (arpCh)      { arp.connect(arpCh); arpCh.connect(bus); }
+      else                 { arp.connect(bus); }
+    }
     if (openHat) openHat.connect(bus);
 
     this._nodes = [drum, snare, hat, bass, poly, melody, reverb, delay, limiter, bus,
-                   melCh, bassCh, chordsCh, kickCh, percCh];
+                   melCh, bassCh, chordsCh, kickCh, percCh, panMel, panChords, panPerc];
+    if (panArp) this._nodes.push(panArp);
     if (vibrato) this._nodes.push(vibrato);
     if (dist) this._nodes.push(dist);
     if (padCh) this._nodes.push(padCh);
@@ -426,31 +438,54 @@ class BackingTrackGenerator {
     }
     if (!melodyMotif) {
       const pitches = SI.map(v => Tone.Frequency(rootPc + v + 60, 'midi').toNote());
-      // Style-specific patterns take priority — genre feel over mood feel
-      const stylePats = {
-        rock:          [0,4,2,4,0,2,4,2],  // pentatonic punch
-        country:       [0,1,2,3,2,1,2,0],  // stepwise vocal walk
-        'hip-hop':     [0,0,3,3,0,5,3,0],  // rhythmic bounce
-        dance:         [0,4,4,0,2,4,2,0],  // arpeggiated drive
-        'weird electro':[0,3,6,1,4,2,5,3], // chromatic weirdness
-        pop:           [0,2,4,2,4,5,4,2],  // ascending brightness
+      // Pitch index sequences per style/mood
+      const stylePitchPats = {
+        rock:           [0,4,2,4,0,2,4,2],
+        country:        [0,1,2,3,2,1,2,0],
+        'hip-hop':      [0,0,3,3,0,5,3,0],
+        dance:          [0,4,4,0,2,4,2,0],
+        'weird electro':[0,3,6,1,4,2,5,3],
+        pop:            [0,2,4,2,4,5,4,2],
       };
-      const moodPats = {
-        happy:  [0,2,4,2,4,5,4,2],  // ascending brightness
-        sad:    [0,1,2,1,0,2,1,0],  // drooping minor steps
-        chill:  [0,2,4,3,4,2,4,2],  // lazy jazz swing
-        spooky: [0,2,1,0,3,2,1,3],  // unsettling chromatic creep
-        silly:  [0,3,1,4,2,4,0,3],  // jumpy, unpredictable leaps
-        epic:   [0,4,6,2,4,6,4,2],  // sweeping dorian ascent
+      const moodPitchPats = {
+        happy:  [0,2,4,2,4,5,4,2],
+        sad:    [0,1,2,1,0,2,1,0],
+        chill:  [0,2,4,3,4,2,4,2],
+        spooky: [0,2,1,0,3,2,1,3],
+        silly:  [0,3,1,4,2,4,0,3],
+        epic:   [0,4,6,2,4,6,4,2],
       };
-      melodyMotif = (stylePats[style] || moodPats[mood] || moodPats.happy).map((idx, i) => ({ time: i * eighthSec, note: pitches[idx % pitches.length] }));
+      const pitchPat = stylePitchPats[style] || moodPitchPats[mood] || moodPitchPats.happy;
+
+      // Rhythm patterns: [barFraction, durationToken] — varied note lengths per genre
+      const b = secPerBar;
+      const melRhythms = {
+        rock:           [[0,'4n'],[0.25,'8n'],[0.375,'8n'],[0.5,'4n'],[0.625,'8n'],[0.75,'8n']],
+        country:        [[0,'4n'],[0.375,'8n'],[0.5,'4n'],[0.75,'8n'],[0.875,'8n']],
+        'hip-hop':      [[0.125,'8n'],[0.25,'8n'],[0.5,'4n'],[0.75,'8n'],[0.875,'8n']],
+        dance:          [[0,'8n'],[0.125,'8n'],[0.25,'8n'],[0.5,'4n'],[0.75,'8n']],
+        'weird electro':[[0,'16n'],[0.0625,'16n'],[0.25,'8n'],[0.5,'8n'],[0.625,'16n'],[0.75,'8n']],
+        pop:            [[0,'4n'],[0.25,'8n'],[0.5,'4n'],[0.625,'8n'],[0.875,'8n']],
+        happy:          [[0,'4n'],[0.25,'8n'],[0.5,'4n'],[0.75,'8n']],
+        sad:            [[0,'2n'],[0.5,'4n'],[0.75,'8n']],
+        chill:          [[0,'4n'],[0.375,'8n'],[0.5,'4n'],[0.875,'8n']],
+        spooky:         [[0,'2n'],[0.5,'8n'],[0.625,'8n'],[0.75,'8n']],
+        silly:          [[0,'8n'],[0.125,'8n'],[0.25,'8n'],[0.5,'8n'],[0.75,'8n'],[0.875,'8n']],
+        epic:           [[0,'2n'],[0.5,'4n'],[0.875,'8n']],
+      };
+      const rhythm = melRhythms[style] || melRhythms[mood] || melRhythms.happy;
+      melodyMotif = rhythm.map((r, i) => ({
+        time:     r[0] * b,
+        duration: r[1],
+        note:     pitches[pitchPat[i % pitchPat.length] % pitches.length],
+      }));
     }
 
     // B-phrase: 4-note answer to the A-phrase, pitched up ~3 semitones within the scale,
     // placed in the second half of the bar (beat 3 onward) for call-and-response feel
-    const bMotif = melodyMotif.slice(4).map((m, i) => {
+    const bMotif = melodyMotif.slice(Math.ceil(melodyMotif.length / 2)).map((m, i) => {
       let midi = 60; try { midi = Tone.Frequency(m.note).toMidi(); } catch {}
-      return { time: secPerBar * 0.5 + i * eighthSec, note: Tone.Frequency(snapMidi(midi + 3), 'midi').toNote() };
+      return { time: secPerBar * 0.5 + i * eighthSec, duration: m.duration || '8n', note: Tone.Frequency(snapMidi(midi + 3), 'midi').toNote() };
     });
 
     // Song structure helpers
@@ -582,14 +617,14 @@ class BackingTrackGenerator {
         const useBPhrase = bar % 4 >= 2;    // bars 2,3: B answer phrase
         if (useAPhrase) {
           melodyMotif.forEach(m => {
-            const mv = hVel(0.55);
-            sched('melody', { note:m.note, duration:'8n', velocity:mv }, (time) => melody.triggerAttackRelease(m.note, '8n', time, mv), hTime(t + m.time));
+            const mv = hVel(0.55), dur = m.duration || '8n';
+            sched('melody', { note:m.note, duration:dur, velocity:mv }, (time) => melody.triggerAttackRelease(m.note, dur, time, mv), hTime(t + m.time));
           });
         }
         if (useBPhrase && bMotif.length) {
           bMotif.forEach(m => {
-            const mv = hVel(0.48);
-            sched('melody', { note:m.note, duration:'8n', velocity:mv }, (time) => melody.triggerAttackRelease(m.note, '8n', time, mv), hTime(t + m.time));
+            const mv = hVel(0.48), dur = m.duration || '8n';
+            sched('melody', { note:m.note, duration:dur, velocity:mv }, (time) => melody.triggerAttackRelease(m.note, dur, time, mv), hTime(t + m.time));
           });
         }
       }
@@ -617,7 +652,7 @@ class BackingTrackGenerator {
     Tone.Transport.schedule(() => Tone.Transport.stop(), totalSec);
     const channels = { melody:melCh, bass:bassCh, chords:chordsCh, kick:kickCh, perc:percCh,
                        ...(padCh ? {pad:padCh} : {}), ...(arpCh ? {arp:arpCh} : {}) };
-    const synths = { melody, bass, poly };
+    const synths = { melody, bass, poly, drum, snare, hat };
     return { bars, totalSec, effectiveBpm, drumMode: isHalfTime ? 'half-time' : isDoubletime ? 'double-time' : 'standard', melodySource, tracks, channels, synths, scalePcs };
   }
 }
@@ -850,12 +885,65 @@ class TrackView {
 // ── MasterTimeline ────────────────────────────────────────────────────────────
 
 class MasterTimeline {
-  constructor(el) { this._el = el; this._loops = []; this._nextId = 1; this._dragId = null; }
+  constructor(el) { this._el = el; this._loops = []; this._nextId = 1; this._dragId = null; this._playing = false; }
 
   add(label, snap) {
     this._loops.push({ id: `loop-${this._nextId++}`, label, snap });
     this._render();
   }
+
+  duplicate(loopId) {
+    const src = this._loops.find(l => l.id === loopId);
+    if (!src) return;
+    this._loops.push({ id: `loop-${this._nextId++}`, label: src.label + ' (copy)', snap: JSON.parse(JSON.stringify(src.snap)) });
+    this._render();
+  }
+
+  play(result) {
+    if (!this._loops.length) return;
+    Tone.Transport.stop();
+    Tone.Transport.cancel();
+    const s = result?.synths ?? {};
+    let offset = 0;
+    for (const loop of this._loops) {
+      const { tracks, totalSec, effectiveBpm } = loop.snap;
+      Tone.Transport.bpm.value = effectiveBpm;
+      for (const [tid, events] of Object.entries(tracks)) {
+        for (const ev of (events || [])) {
+          const t = offset + ev.time;
+          const dur = ev.duration || '8n';
+          const vel = ev.velocity || 0.5;
+          if (tid === 'melody' && s.melody)
+            Tone.Transport.schedule((time) => s.melody.triggerAttackRelease(ev.note, dur, time, vel), t);
+          else if (tid === 'bass' && s.bass)
+            Tone.Transport.schedule((time) => s.bass.triggerAttackRelease(ev.note, dur, time, vel), t);
+          else if (tid === 'chords' && s.poly) {
+            const notes = ev.notes ?? (ev.note ? [ev.note] : []);
+            if (notes.length) Tone.Transport.schedule((time) => s.poly.triggerAttackRelease(notes, dur, time, vel), t);
+          } else if (tid === 'kick' && s.drum)
+            Tone.Transport.schedule((time) => s.drum.triggerAttackRelease('C1', dur, time, vel), t);
+          else if (tid === 'snare' && s.snare)
+            Tone.Transport.schedule((time) => s.snare.triggerAttackRelease(dur, time, vel), t);
+          else if (tid === 'hat' && s.hat)
+            Tone.Transport.schedule((time) => s.hat.triggerAttackRelease(dur, time, vel), t);
+        }
+      }
+      offset += totalSec;
+    }
+    Tone.Transport.schedule(() => { Tone.Transport.stop(); this._playing = false; this._updatePlayBtn(); }, offset);
+    Tone.Transport.start();
+    this._playing = true;
+    this._updatePlayBtn();
+  }
+
+  stop() { Tone.Transport.stop(); this._playing = false; this._updatePlayBtn(); }
+
+  _updatePlayBtn() {
+    const btn = document.getElementById('playTimelineBtn');
+    if (btn) btn.textContent = this._playing ? '⏹ Stop' : '▶ Play Song';
+  }
+
+  get totalDuration() { return this._loops.reduce((a, l) => a + l.snap.totalSec, 0); }
 
   _render() {
     this._el.innerHTML = '';
@@ -864,6 +952,12 @@ class MasterTimeline {
       return;
     }
     for (const loop of this._loops) this._el.appendChild(this._makeBlock(loop));
+    // Summary bar
+    const total = this.totalDuration;
+    const summary = document.createElement('div');
+    summary.style.cssText = 'padding:6px 10px;font-size:0.8rem;color:#9eb0d0;';
+    summary.textContent = `${this._loops.length} loop${this._loops.length !== 1 ? 's' : ''} · ${total.toFixed(1)}s total`;
+    this._el.appendChild(summary);
   }
 
   _makeBlock(loop) {
@@ -888,9 +982,11 @@ class MasterTimeline {
     const meta = document.createElement('span'); meta.className = 'block-meta muted';
     meta.textContent = `${loop.snap.totalSec.toFixed(1)}s · ${Math.round(loop.snap.effectiveBpm)} BPM`;
     const expandBtn = document.createElement('button'); expandBtn.textContent = '▼ Tracks'; expandBtn.className = 'block-expand-btn';
+    const copyBtn = document.createElement('button'); copyBtn.textContent = '⧉ Copy'; copyBtn.className = 'block-expand-btn'; copyBtn.title = 'Duplicate loop';
+    copyBtn.onclick = (e) => { e.stopPropagation(); this.duplicate(loop.id); };
     const delBtn = document.createElement('button'); delBtn.textContent = '✕'; delBtn.className = 'block-del-btn'; delBtn.title = 'Remove';
     delBtn.onclick = (e) => { e.stopPropagation(); this._loops = this._loops.filter(l => l.id !== loop.id); this._render(); };
-    hdr.append(grip, lbl, meta, expandBtn, delBtn);
+    hdr.append(grip, lbl, meta, expandBtn, copyBtn, delBtn);
     block.appendChild(hdr);
 
     const tracksPanel = document.createElement('div'); tracksPanel.className = 'block-tracks'; tracksPanel.style.display = 'none';
@@ -1233,4 +1329,9 @@ document.getElementById('addToTimelineBtn').onclick = () => {
   const label = `Loop ${loopCounter++} · ${mood}${style ? ' · ' + style : ''}`;
   masterTimeline.add(label, snap);
   document.getElementById('timeline-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
+
+document.getElementById('playTimelineBtn').onclick = () => {
+  if (masterTimeline._playing) { masterTimeline.stop(); return; }
+  masterTimeline.play(generatedResult);
 };
