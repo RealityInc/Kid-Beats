@@ -4,9 +4,16 @@ export function freqToMidi(freq) { return Math.round(69 + (12 * Math.log2(freq /
 export function midiToFreq(midi) { return 440 * (2 ** ((midi - 69) / 12)); }
 
 function frameRms(frame){ let s=0; for(let i=0;i<frame.length;i++) s += frame[i]*frame[i]; return Math.sqrt(s/frame.length); }
-function autocorrPitch(frame,sr){ let best=0,bLag=0; const minLag=Math.floor(sr/1000),maxLag=Math.floor(sr/80);
-  for(let lag=minLag;lag<=maxLag;lag++){ let c=0; for(let i=0;i<frame.length-lag;i++) c += frame[i]*frame[i+lag]; if(c>best){best=c; bLag=lag;} }
-  if(!bLag||best<1e-6) return null; return {freq:sr/bLag,confidence:Math.min(1,best/(frame.length*0.6))}; }
+function autocorrPitch(frame,sr){
+  // Compute frame energy for normalized confidence (amplitude-independent).
+  let energy=0; for(let i=0;i<frame.length;i++) energy+=frame[i]*frame[i];
+  if(energy<1e-8) return null;
+  let best=0,bLag=0;
+  const minLag=Math.floor(sr/1200),maxLag=Math.floor(sr/80); // 80–1200 Hz covers kids/female voices
+  for(let lag=minLag;lag<=maxLag;lag++){ let c=0; for(let i=0;i<frame.length-lag;i++) c+=frame[i]*frame[i+lag]; if(c>best){best=c;bLag=lag;} }
+  if(!bLag) return null;
+  return {freq:sr/bLag, confidence:Math.min(1,best/(energy*0.8))};
+}
 
 export function analyzeSignal(data, sampleRate){
   const durationSec = data.length / sampleRate; const win=2048, hop=512;
@@ -16,7 +23,7 @@ export function analyzeSignal(data, sampleRate){
     const frame = data.subarray(i, i+win); const e = frameRms(frame); energies.push(e); const t=i/sampleRate;
     const flux = Math.max(0, e-lastE); if(e>0.01 && flux>0.025 && t-lastOnset>=0.15){ onsets.push(t); lastOnset=t; } lastE=e;
     const p=autocorrPitch(frame,sampleRate);
-    if(p && p.freq>=80 && p.freq<=400 && p.confidence>=0.25){
+    if(p && p.freq>=80 && p.freq<=1200 && p.confidence>=0.25){
       const midi=freqToMidi(p.freq); const pitch=midiToNote(midi); const expectedMidi=freqToMidi(midiToFreq(midi));
       if(expectedMidi!==midi) console.error('MIDI-note-frequency mismatch', {midi,pitch,freq:p.freq});
       notes.push({time:t,duration:hop/sampleRate,freq:Number(p.freq.toFixed(2)),midi,pitch,confidence:Number(p.confidence.toFixed(2))});

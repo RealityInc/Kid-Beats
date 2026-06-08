@@ -425,7 +425,7 @@ function computePitchSchedule(pitchContour, key, scale) {
   const noteIndex = { C:0,'C#':1,D:2,'D#':3,E:4,F:5,'F#':6,G:7,'G#':8,A:9,'A#':10,B:11 };
   const root = noteIndex[key] ?? 0;
   const scalePcs = (scaleIntervals[scale] ?? scaleIntervals.major).map(v => (v + root) % 12);
-  const raw = (pitchContour || []).filter(p => p.confidence >= 0.25).map(p => {
+  const raw = (pitchContour || []).filter(p => p.confidence >= 0.2).map(p => {
     const pc = ((p.midi % 12) + 12) % 12;
     let bestPc = scalePcs[0], bestDist = 12;
     for (const sp of scalePcs) {
