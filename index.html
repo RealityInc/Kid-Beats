@@ -180,7 +180,10 @@
     <section class="card" id="timeline-section">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
         <h2 style="margin:0;">Master Timeline</h2>
-        <span class="muted" style="font-size:0.8rem;">Save loops here to arrange your song</span>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <span class="muted" style="font-size:0.8rem;">Drag to reorder · ⧉ Copy to duplicate</span>
+          <button id="playTimelineBtn" class="save-loop-btn">▶ Play Song</button>
+        </div>
       </div>
       <div id="timeline-list"></div>
     </section>
