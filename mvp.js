@@ -1071,38 +1071,40 @@ class MasterTimeline {
 
 function detectPitch(buf, sr) {
   const N = buf.length;
-  let rms = 0; for (let i = 0; i < N; i++) rms += buf[i] * buf[i];
-  if (Math.sqrt(rms / N) < 0.008) return null;
+  // Sum of squares — also serves as ac[0] for NSDF denominator
+  let sumSq = 0;
+  for (let i = 0; i < N; i++) sumSq += buf[i] * buf[i];
+  if (sumSq / N < 0.000064) return null; // RMS < 0.008 gate
+
   const minLag = Math.floor(sr / 1100);
   const maxLag = Math.min(N >> 1, Math.floor(sr / 70));
-  // Naive autocorrelation — fast enough for 2048-sample buffers at 20fps
-  const ac = new Float32Array(maxLag + 1);
-  for (let tau = minLag; tau <= maxLag; tau++) {
-    let s = 0; for (let i = 0; i < N - tau; i++) s += buf[i] * buf[i + tau]; ac[tau] = s;
+
+  // Advance NSDF sliding-window denominator m from tau=0 to tau=minLag
+  // m[tau] = m[tau-1] - x[tau-1]^2 - x[N-tau]^2,  m[0] = 2*sumSq
+  let m = 2 * sumSq;
+  for (let tau = 1; tau <= minLag; tau++) {
+    m -= buf[tau - 1] * buf[tau - 1] + buf[N - tau] * buf[N - tau];
   }
-  if (ac[0] === 0) return null;
-  // NSDF normalization (sliding window)
-  const nsdf = new Float32Array(maxLag + 1);
-  let m = 2 * ac[0];
+
+  // Scan lags minLag..maxLag for first positive NSDF lobe above threshold
+  let bestLag = -1, bestVal = 0.25, inLobe = false;
   for (let tau = minLag; tau <= maxLag; tau++) {
-    m -= buf[tau - 1] * buf[tau - 1] + (N - tau < N ? buf[N - tau] * buf[N - tau] : 0);
-    nsdf[tau] = m > 0 ? 2 * ac[tau] / m : 0;
+    if (tau > minLag) m -= buf[tau - 1] * buf[tau - 1] + buf[N - tau] * buf[N - tau];
+    let ac = 0;
+    for (let i = 0; i < N - tau; i++) ac += buf[i] * buf[i + tau];
+    const nsdf = m > 0 ? 2 * ac / m : 0;
+    if (!inLobe) {
+      if (nsdf > 0) { inLobe = true; if (nsdf > bestVal) { bestVal = nsdf; bestLag = tau; } }
+    } else if (nsdf < 0) {
+      if (bestLag >= 0) break; // end of first lobe — we have our answer
+      inLobe = false;
+    } else if (nsdf > bestVal) {
+      bestVal = nsdf; bestLag = tau;
+    }
   }
-  // First significant positive lobe above 0.3
-  let bestLag = -1, bestVal = 0.3, inLobe = false;
-  for (let tau = minLag; tau <= maxLag; tau++) {
-    if (!inLobe) { if (nsdf[tau] > 0) inLobe = true; }
-    else if (nsdf[tau] < 0) { inLobe = false; }
-    else if (nsdf[tau] > bestVal) { bestVal = nsdf[tau]; bestLag = tau; }
-  }
+
   if (bestLag < 0) return null;
-  // Parabolic refinement
-  const y0 = bestLag > minLag ? nsdf[bestLag - 1] : nsdf[bestLag];
-  const y1 = nsdf[bestLag];
-  const y2 = bestLag < maxLag ? nsdf[bestLag + 1] : nsdf[bestLag];
-  const d = 2 * y1 - y0 - y2;
-  const refined = d !== 0 ? bestLag + (y2 - y0) / (2 * d) : bestLag;
-  return { freq: sr / refined, confidence: bestVal };
+  return { freq: sr / bestLag, confidence: bestVal };
 }
 
 // ── Key estimation (Krumhansl-Schmuckler profiles) ────────────────────────────
@@ -1246,7 +1248,7 @@ class LiveJamEngine {
     if (this._frameCount % 3 === 0 && this._analyser) {
       this._analyser.getFloatTimeDomainData(this._pitchBuf);
       const result = detectPitch(this._pitchBuf, this._nativeAC.sampleRate);
-      if (result && result.confidence > 0.35) {
+      if (result && result.confidence > 0.25) {
         const midi = Math.round(69 + 12 * Math.log2(result.freq / 440));
         if (midi >= 48 && midi <= 96) {
           this._midiAccum.push(midi);
