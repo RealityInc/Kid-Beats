@@ -244,7 +244,8 @@ class BackingTrackGenerator {
     const melKey   = instruments.melody === 'auto' ? styleDefs.melody : instruments.melody;
     const bassKey  = instruments.bass   === 'auto' ? styleDefs.bass   : instruments.bass;
     const drumsKey = instruments.drums  === 'auto' ? styleDefs.drums  : instruments.drums;
-    const humanize = Math.max(0, Math.min(1, options.humanize || 0));
+    const humanize   = Math.max(0, Math.min(1, options.humanize   || 0));
+    const complexity = Math.max(0, Math.min(1, options.complexity ?? 0.5));
     const isRock = style === 'rock';
     const isCountry = style === 'country';
     const is4OnFloor = style === 'dance';
@@ -321,16 +322,16 @@ class BackingTrackGenerator {
       melody = new Tone.Synth({ oscillator:{type:melOsc}, envelope:melEnv });
     }
 
-    // Atmospheric pad — lush long notes for spooky/chill/sad/epic
-    const usePad = ['spooky', 'chill', 'sad', 'epic'].includes(mood);
+    // Atmospheric pad — lush long notes for spooky/chill/sad/epic; requires medium+ complexity
+    const usePad = complexity >= 0.25 && ['spooky', 'chill', 'sad', 'epic'].includes(mood);
     const pad = usePad ? new Tone.PolySynth(Tone.AMSynth, { harmonicity: mood === 'spooky' ? 2.0 : 1.5, envelope: { attack: mood === 'spooky' ? 2.5 : 1.5, decay: 1.0, sustain: 0.8, release: 2.5 } }) : null;
 
-    // Arp synth — 8th-note chord arpeggios for dance/electro/happy/silly
-    const useArp = (is4OnFloor || isElectro || mood === 'happy' || mood === 'silly') && !isCountry && !isRock;
+    // Arp synth — requires medium+ complexity
+    const useArp = complexity >= 0.4 && (is4OnFloor || isElectro || mood === 'happy' || mood === 'silly') && !isCountry && !isRock;
     const arp = useArp ? new Tone.Synth({ oscillator: { type: isElectro ? 'sawtooth' : 'square' }, envelope: { attack: 0.005, decay: 0.1, sustain: 0.15, release: 0.08 } }) : null;
 
-    // Open-hat shimmer — metallic sustain for spooky/chill/sad breathing space
-    const useOpenHat = ['spooky', 'chill', 'sad'].includes(mood);
+    // Open-hat shimmer — requires medium+ complexity
+    const useOpenHat = complexity >= 0.3 && ['spooky', 'chill', 'sad'].includes(mood);
     const openHat = useOpenHat ? new Tone.MetalSynth({ frequency: 400, envelope: { attack: 0.001, decay: 0.9, release: 0.5 }, resonance: 4000, harmonicity: 5.1, modulationIndex: 32, octaves: 1.5 }) : null;
 
     // Effects — reverb and delay scale with mood atmosphere
@@ -540,8 +541,12 @@ class BackingTrackGenerator {
     const snareBeats = isHalfTime   ? [0.5]
                      : isDoubletime ? [0.25, 0.5, 0.75]
                      :                [0.25, 0.75];
-    // Country: no hi-hat (acoustic/brushed feel); hip-hop: sparse; everything else: normal grid
-    const hatDiv = isCountry ? 0 : isHipHop ? 2 : isDoubletime ? 8 : effectiveBpm > 95 ? 4 : 2;
+    // Hat density scales with complexity: silent at low end, doubles at high end
+    const baseHatDiv = isCountry ? 0 : isHipHop ? 2 : isDoubletime ? 8 : effectiveBpm > 95 ? 4 : 2;
+    const hatDiv = complexity < 0.15 ? 0
+                 : complexity < 0.4  ? Math.min(baseHatDiv, 2)
+                 : complexity < 0.75 ? baseHatDiv
+                 :                     Math.min(8, baseHatDiv * 2);
     const kickSet = new Set(kickBeats.map(f => Math.round(f * 1000)));
     const hatBeats = Array.from({ length: hatDiv }, (_, i) => i / hatDiv).filter(f => !kickSet.has(Math.round(f * 1000)));
 
@@ -557,10 +562,15 @@ class BackingTrackGenerator {
       const dynVel = Math.max(0.25, Math.min(1.0, barE / Math.max(avgEnergy * 1.2, 0.001))) * secVelMult;
       // Chords voiced one octave above the bass root to separate frequency ranges
       const chordRoot = Tone.Frequency(root).transpose(12).toNote();
-      const chord = prog[bar % prog.length].map((n) => Tone.Frequency(chordRoot).transpose(n).toNote());
+      const chordFull = prog[bar % prog.length].map((n) => Tone.Frequency(chordRoot).transpose(n).toNote());
+      // Low complexity: dyads (2 notes); medium: full chord; high: add octave double of root
+      const chord = complexity < 0.3 ? chordFull.slice(0, 2)
+                  : complexity > 0.75 ? [...chordFull, Tone.Frequency(chordFull[0]).transpose(12).toNote()]
+                  : chordFull;
 
-      // Drum fill: snare roll on last beat of every 4th bar (except intro)
-      const isFillBar = !isIntro && bar > 0 && bar % 4 === 3;
+      // Drum fill frequency scales with complexity (none → every 4 bars → every 2 bars)
+      const fillEvery = complexity < 0.35 ? 0 : complexity > 0.7 ? 2 : 4;
+      const isFillBar = fillEvery > 0 && !isIntro && bar > 0 && bar % fillEvery === fillEvery - 1;
 
       kickBeats.forEach(f => {
         const st = hTime(t + secPerBar * f), kdur = isHipHop ? '4n' : '8n', kv = hVel(0.65 + dynVel * 0.3);
@@ -631,9 +641,13 @@ class BackingTrackGenerator {
         sched('bass', { note:bassNote2, duration:'8n', velocity:bv2 }, (time) => bass.triggerAttackRelease(bassNote2, '8n', time, bv2), hTime(t + secPerBar * 0.5));
       }
 
-      // Melody — phrase pattern + voice-aware gaps; absent in intro and outro
+      // Melody — phrase pattern shaped by complexity; absent in intro and outro
       if (!isIntro && !isOutro) {
-        const phraseType = phrasePattern[bar % 4];
+        const rawPhrase = phrasePattern[bar % 4];
+        // Low: only A phrases, no B or rests. High: fill null slots with A.
+        const phraseType = complexity < 0.3 ? (rawPhrase === 'A' ? 'A' : null)
+                         : complexity > 0.7 ? (rawPhrase ?? 'A')
+                         : rawPhrase;
         const playMotif = phraseType === 'A' ? melodyMotif : phraseType === 'B' ? bMotif : null;
         if (playMotif) {
           playMotif.forEach(m => {
@@ -1561,7 +1575,8 @@ const _wireSlider = (id, valId, cb) => {
 };
 _wireSlider('autoTuneToggle',  'autoTuneVal',  applyTuning);
 _wireSlider('quantizeToggle',  'quantizeVal',  applyTuning);
-_wireSlider('humanizeToggle',  'humanizeVal',  null);
+_wireSlider('humanizeToggle',   'humanizeVal',   null);
+_wireSlider('complexityToggle', 'complexityVal', () => regenIfIdle());
 const isPlaying = () => ['playingBacking', 'playingTogether'].includes(stateMachine.state);
 const regenIfIdle = () => { if (generatedResult && !isPlaying()) regenerate(); };
 moodSelect.onchange = () => { applyTuning(); regenIfIdle(); };
@@ -1616,8 +1631,9 @@ async function regenerate() {
     drums:  document.getElementById('drumKit').value,
   };
   try {
-    const humanize = parseInt(document.getElementById('humanizeToggle').value) / 100;
-    const res = await generator.generate(analysis, { mood, style, length: lengthSelect.value, instruments, bpmOverride, humanize });
+    const humanize   = parseInt(document.getElementById('humanizeToggle').value) / 100;
+    const complexity = parseInt(document.getElementById('complexityToggle').value) / 100;
+    const res = await generator.generate(analysis, { mood, style, length: lengthSelect.value, instruments, bpmOverride, humanize, complexity });
     generatedResult = res;
     document.getElementById('bpmInput').value = res.effectiveBpm;
     debug.backing = `generated (${res.bars} bars, ${res.totalSec.toFixed(1)}s, bpm:${res.effectiveBpm}, drums:${res.drumMode}, melody:${res.melodySource})`;
@@ -1702,7 +1718,8 @@ stopJamBtn.onclick = async () => {
   if (moodMatch) moodSelect.value = moodMatch.value;
   stateMachine.set('generating');
   try {
-    const humanize = parseInt(document.getElementById('humanizeToggle').value) / 100;
+    const humanize   = parseInt(document.getElementById('humanizeToggle').value) / 100;
+    const complexity = parseInt(document.getElementById('complexityToggle').value) / 100;
     const instruments = {
       melody: document.getElementById('melodyInstrument').value,
       bass:   document.getElementById('bassInstrument').value,
@@ -1710,7 +1727,7 @@ stopJamBtn.onclick = async () => {
     };
     generatedResult = await generator.generate(res.fakeAnalysis, {
       mood: res.mood, style: res.style, length: 'match', instruments,
-      bpmOverride: res.fakeAnalysis.bpm, humanize,
+      bpmOverride: res.fakeAnalysis.bpm, humanize, complexity,
     });
     document.getElementById('bpmInput').value = generatedResult.effectiveBpm;
     stateMachine.set('generated');
