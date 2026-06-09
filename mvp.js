@@ -1136,6 +1136,7 @@ class LiveJamEngine {
     this._prog = null; this._onUpdate = null; this._tone = {};
     this._nodes = []; this._seqs = []; this._pitchBuf = null;
     this._frameCount = 0; this._bpm = 90; this._style = 'pop'; this._mood = 'happy';
+    this._rmsAvg = 0; this._inOnset = false; this._onsetTimes = [];
   }
 
   async start({ bpm, style, mood, onUpdate }) {
@@ -1144,6 +1145,7 @@ class LiveJamEngine {
     this._running = true; this._midiAccum = []; this._barCount = 0;
     this._keyLocked = false; this._lockedKey = null; this._lockedScale = null;
     this._prog = null; this._chunks = []; this._frameCount = 0;
+    this._rmsAvg = 0; this._inOnset = false; this._onsetTimes = [];
     this._stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     // Native AudioContext for pitch detection (separate from Tone.js)
     this._nativeAC = new AudioContext();
@@ -1242,11 +1244,46 @@ class LiveJamEngine {
     }
   }
 
+  _detectTempo(rms, nowSec) {
+    // Exponential moving average of RMS — slow enough to track breath envelope
+    this._rmsAvg = this._rmsAvg * 0.92 + rms * 0.08;
+    // Onset: energy spike well above running average
+    if (rms > Math.max(this._rmsAvg * 1.7, 0.015) && !this._inOnset) {
+      this._inOnset = true;
+      this._onsetTimes.push(nowSec);
+      if (this._onsetTimes.length > 12) this._onsetTimes.shift();
+      // Estimate BPM from median inter-onset interval once we have enough onsets
+      if (this._onsetTimes.length >= 4) {
+        const iois = [];
+        for (let i = 1; i < this._onsetTimes.length; i++) iois.push(this._onsetTimes[i] - this._onsetTimes[i - 1]);
+        iois.sort((a, b) => a - b);
+        const med = iois[Math.floor(iois.length / 2)];
+        let bpm = 60 / med;
+        // Octave-fold into 60–160 BPM range
+        while (bpm < 60) bpm *= 2;
+        while (bpm > 160) bpm /= 2;
+        bpm = Math.round(bpm);
+        if (bpm >= 60 && bpm <= 160 && Math.abs(bpm - this._bpm) >= 3) {
+          this._bpm = bpm;
+          Tone.Transport.bpm.rampTo(bpm, 1.5);
+          const keyStr = this._keyLocked ? `${this._lockedKey} ${this._lockedScale}` : 'detecting key…';
+          this._onUpdate?.({ status: `Key: ${keyStr} · BPM: ${bpm}`, keyLocked: this._keyLocked });
+        }
+      }
+    } else if (rms < this._rmsAvg * 0.6) {
+      this._inOnset = false;
+    }
+  }
+
   _detectLoop() {
     if (!this._running) return;
     this._frameCount++;
     if (this._frameCount % 3 === 0 && this._analyser) {
       this._analyser.getFloatTimeDomainData(this._pitchBuf);
+      // Tempo detection from onsets
+      let sumSq = 0;
+      for (let i = 0; i < this._pitchBuf.length; i++) sumSq += this._pitchBuf[i] * this._pitchBuf[i];
+      this._detectTempo(Math.sqrt(sumSq / this._pitchBuf.length), performance.now() / 1000);
       const result = detectPitch(this._pitchBuf, this._nativeAC.sampleRate);
       if (result && result.confidence > 0.25) {
         const midi = Math.round(69 + 12 * Math.log2(result.freq / 440));
@@ -1263,7 +1300,7 @@ class LiveJamEngine {
             }
             if (!this._keyLocked) {
               this._keyLocked = true;
-              this._onUpdate?.({ status: `Key: ${est.key} ${est.scale} — backing emerging…`, keyLocked: true, key: est.key, scale: est.scale });
+              this._onUpdate?.({ status: `Key: ${est.key} ${est.scale} · BPM: ${this._bpm} — backing emerging…`, keyLocked: true, key: est.key, scale: est.scale });
             }
           }
         }
