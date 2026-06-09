@@ -1259,8 +1259,8 @@ class LiveJamEngine {
         iois.sort((a, b) => a - b);
         const med = iois[Math.floor(iois.length / 2)];
         let bpm = 60 / med;
-        // Octave-fold into 60–160 BPM range
-        while (bpm < 60) bpm *= 2;
+        // Octave-fold into 80–160 BPM — prefer the faster interpretation
+        while (bpm < 80) bpm *= 2;
         while (bpm > 160) bpm /= 2;
         bpm = Math.round(bpm);
         if (bpm >= 60 && bpm <= 160 && Math.abs(bpm - this._bpm) >= 3) {
