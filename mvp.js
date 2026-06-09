@@ -1146,6 +1146,7 @@ class LiveJamEngine {
     this._keyLocked = false; this._lockedKey = null; this._lockedScale = null;
     this._prog = null; this._chunks = []; this._frameCount = 0;
     this._rmsAvg = 0; this._inOnset = false; this._onsetTimes = [];
+    this._jamStartMs = performance.now();
     this._stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     // Native AudioContext for pitch detection (separate from Tone.js)
     this._nativeAC = new AudioContext();
@@ -1288,11 +1289,11 @@ class LiveJamEngine {
       if (result && result.confidence > 0.25) {
         const midi = Math.round(69 + 12 * Math.log2(result.freq / 440));
         if (midi >= 48 && midi <= 96) {
-          this._midiAccum.push(midi);
+          this._midiAccum.push({ midi, time: (performance.now() - this._jamStartMs) / 1000 });
           const n = this._midiAccum.length;
           // Estimate key after 8 notes, update every 4 after that
           if (n >= 8 && (n === 8 || n % 4 === 0)) {
-            const est = estimateKey(this._midiAccum);
+            const est = estimateKey(this._midiAccum.map(e => e.midi));
             this._lockedKey = est.key; this._lockedScale = est.scale;
             if (!this._prog) {
               const fa = { key: est.key, scale: est.scale, bpm: this._bpm, phrases: [], pitchContour: [], durationSec: 30, mood: this._mood };
@@ -1333,7 +1334,7 @@ class LiveJamEngine {
     const fakeAnalysis = {
       key, scale, bpm, mood, styleSuggestion: style,
       durationSec: totalBars * secPerBar,
-      pitchContour: this._midiAccum.map((m, i) => ({ time: i * 0.25, midi: m, confidence: 0.8 })),
+      pitchContour: this._midiAccum.map(({ midi, time }) => ({ time, midi, confidence: 0.8 })),
       phrases: Array.from({ length: totalBars }, (_, i) => ({ start: i * secPerBar, end: (i + 1) * secPerBar, energy: 0.6 })),
     };
     return { fakeAnalysis, vocalBlob, style, mood };
@@ -1411,8 +1412,8 @@ class PlaybackEngine {
   async playBacking() { await Tone.start(); this.stop(); Tone.Transport.position = 0; Tone.Transport.start(); }
   async playTogether() {
     this.stop();
+    await Tone.start();           // resume AudioContext before creating the player chain
     this._ensureAudioChain();
-    await Tone.start();
     if (!this._tonePlayer.loaded) await this._tonePlayer.load(this._voiceUrl);
     Tone.Transport.position = 0;
     const startAt = Tone.now();
