@@ -1067,6 +1067,240 @@ class MasterTimeline {
   }
 }
 
+// ── Pitch detection (NSDF autocorrelation) ───────────────────────────────────
+
+function detectPitch(buf, sr) {
+  const N = buf.length;
+  let rms = 0; for (let i = 0; i < N; i++) rms += buf[i] * buf[i];
+  if (Math.sqrt(rms / N) < 0.008) return null;
+  const minLag = Math.floor(sr / 1100);
+  const maxLag = Math.min(N >> 1, Math.floor(sr / 70));
+  // Naive autocorrelation — fast enough for 2048-sample buffers at 20fps
+  const ac = new Float32Array(maxLag + 1);
+  for (let tau = minLag; tau <= maxLag; tau++) {
+    let s = 0; for (let i = 0; i < N - tau; i++) s += buf[i] * buf[i + tau]; ac[tau] = s;
+  }
+  if (ac[0] === 0) return null;
+  // NSDF normalization (sliding window)
+  const nsdf = new Float32Array(maxLag + 1);
+  let m = 2 * ac[0];
+  for (let tau = minLag; tau <= maxLag; tau++) {
+    m -= buf[tau - 1] * buf[tau - 1] + (N - tau < N ? buf[N - tau] * buf[N - tau] : 0);
+    nsdf[tau] = m > 0 ? 2 * ac[tau] / m : 0;
+  }
+  // First significant positive lobe above 0.3
+  let bestLag = -1, bestVal = 0.3, inLobe = false;
+  for (let tau = minLag; tau <= maxLag; tau++) {
+    if (!inLobe) { if (nsdf[tau] > 0) inLobe = true; }
+    else if (nsdf[tau] < 0) { inLobe = false; }
+    else if (nsdf[tau] > bestVal) { bestVal = nsdf[tau]; bestLag = tau; }
+  }
+  if (bestLag < 0) return null;
+  // Parabolic refinement
+  const y0 = bestLag > minLag ? nsdf[bestLag - 1] : nsdf[bestLag];
+  const y1 = nsdf[bestLag];
+  const y2 = bestLag < maxLag ? nsdf[bestLag + 1] : nsdf[bestLag];
+  const d = 2 * y1 - y0 - y2;
+  const refined = d !== 0 ? bestLag + (y2 - y0) / (2 * d) : bestLag;
+  return { freq: sr / refined, confidence: bestVal };
+}
+
+// ── Key estimation (Krumhansl-Schmuckler profiles) ────────────────────────────
+
+function estimateKey(midis) {
+  const major = [6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88];
+  const minor = [6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17];
+  const counts = new Array(12).fill(0);
+  for (const m of midis) counts[((m % 12) + 12) % 12]++;
+  let bestScore = -Infinity, bestKey = 0, bestScale = 'major';
+  const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+  for (let root = 0; root < 12; root++) {
+    for (const [prof, sc] of [[major,'major'],[minor,'minor']]) {
+      let score = 0; for (let pc = 0; pc < 12; pc++) score += counts[(pc + root) % 12] * prof[pc];
+      if (score > bestScore) { bestScore = score; bestKey = root; bestScale = sc; }
+    }
+  }
+  return { key: NOTE_NAMES[bestKey], scale: bestScale };
+}
+
+// ── LiveJamEngine ─────────────────────────────────────────────────────────────
+
+class LiveJamEngine {
+  constructor() {
+    this._running = false; this._stream = null; this._nativeAC = null;
+    this._analyser = null; this._rafId = null; this._recorder = null;
+    this._chunks = []; this._midiAccum = []; this._barCount = 0;
+    this._keyLocked = false; this._lockedKey = null; this._lockedScale = null;
+    this._prog = null; this._onUpdate = null; this._tone = {};
+    this._nodes = []; this._seqs = []; this._pitchBuf = null;
+    this._frameCount = 0; this._bpm = 90; this._style = 'pop'; this._mood = 'happy';
+  }
+
+  async start({ bpm, style, mood, onUpdate }) {
+    await Tone.start();
+    this._bpm = bpm; this._style = style; this._mood = mood; this._onUpdate = onUpdate;
+    this._running = true; this._midiAccum = []; this._barCount = 0;
+    this._keyLocked = false; this._lockedKey = null; this._lockedScale = null;
+    this._prog = null; this._chunks = []; this._frameCount = 0;
+    this._stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // Native AudioContext for pitch detection (separate from Tone.js)
+    this._nativeAC = new AudioContext();
+    const src = this._nativeAC.createMediaStreamSource(this._stream);
+    this._analyser = this._nativeAC.createAnalyser(); this._analyser.fftSize = 2048;
+    src.connect(this._analyser);
+    // MediaRecorder for voice capture
+    const mimeType = AudioInputManager.preferredMimeType();
+    this._recorder = new MediaRecorder(this._stream, mimeType ? { mimeType } : undefined);
+    this._recorder.ondataavailable = (e) => { if (e.data.size) this._chunks.push(e.data); };
+    this._recorder.start(250);
+    this._buildInstruments();
+    Tone.Transport.stop(); Tone.Transport.cancel();
+    Tone.Transport.bpm.value = bpm;
+    this._startSequencers();
+    Tone.Transport.start();
+    this._pitchBuf = new Float32Array(2048);
+    this._detectLoop();
+    onUpdate?.({ status: 'Listening — sing or hum to build the backing track…', keyLocked: false });
+  }
+
+  _buildInstruments() {
+    this._disposeInstruments();
+    const isHipHop = this._style === 'hip-hop', isRock = this._style === 'rock';
+    const reverb = new Tone.Reverb({ decay: 2.2, wet: 0.28 });
+    const delay = new Tone.PingPongDelay('8n', 0.12);
+    const limiter = new Tone.Limiter(-1).toDestination();
+    const bus = new Tone.Gain(0.85).chain(reverb, delay, limiter);
+    const drum  = new Tone.MembraneSynth(isHipHop
+      ? { pitchDecay:0.18, octaves:9, envelope:{attack:0.001,decay:0.6,sustain:0} }
+      : { pitchDecay:0.05, octaves:4, envelope:{attack:0.001,decay:0.28,sustain:0} });
+    const snare = new Tone.NoiseSynth({ noise:{type:'pink'}, envelope:{attack:0.001,decay:0.13,sustain:0} });
+    const hat   = new Tone.NoiseSynth({ noise:{type:'white'}, envelope:{attack:0.001,decay:0.05,sustain:0} });
+    const bass  = new Tone.Synth({ oscillator:{type:isHipHop?'sine':isRock?'sawtooth':'triangle'}, envelope:{attack:0.01,decay:0.3,sustain:0.6,release:0.4} });
+    const poly  = new Tone.PolySynth(Tone.Synth, { oscillator:{type:'triangle'}, envelope:{attack:0.04,decay:0.4,sustain:0.7,release:1.2} });
+    const mel   = new Tone.Synth({ oscillator:{type:'triangle'}, envelope:{attack:0.02,decay:0.2,sustain:0.5,release:0.3} });
+    const kickCh = new Tone.Gain(1), bassCh = new Tone.Gain(1), percCh = new Tone.Gain(1);
+    const chordsCh = new Tone.Gain(0); // fades in after key detected
+    const melCh    = new Tone.Gain(0); // fades in after key locked
+    drum.connect(kickCh); kickCh.connect(limiter);
+    snare.connect(percCh); hat.connect(percCh); percCh.connect(bus);
+    bass.connect(bassCh); bassCh.connect(bus);
+    poly.connect(chordsCh); chordsCh.connect(bus);
+    mel.connect(melCh); melCh.connect(bus);
+    this._tone = { drum, snare, hat, bass, poly, mel, bus, reverb, delay, limiter, kickCh, bassCh, percCh, chordsCh, melCh };
+    this._nodes = [drum, snare, hat, bass, poly, mel, reverb, delay, limiter, bus, kickCh, bassCh, percCh, chordsCh, melCh];
+  }
+
+  _disposeInstruments() {
+    for (const seq of this._seqs) { try { seq.stop(0); seq.dispose(); } catch {} }
+    this._seqs = [];
+    for (const n of this._nodes) { try { n.dispose(); } catch {} }
+    this._nodes = []; this._tone = {};
+  }
+
+  _startSequencers() {
+    const { drum, snare, hat } = this._tone;
+    const is4OnFloor = this._style === 'dance';
+    const kickPat = is4OnFloor ? ['C1','C1','C1','C1'] : ['C1',null,'C1',null];
+    const kickSeq = new Tone.Sequence((t, n) => { if (n) drum.triggerAttackRelease(n,'8n',t,0.7); }, kickPat, '4n');
+    const snareSeq = new Tone.Sequence((t, n) => { if (n) snare.triggerAttackRelease('8n',t,0.35); }, [null,'x',null,'x'], '4n');
+    const hatSeq = new Tone.Sequence((t, n) => { if (n) hat.triggerAttackRelease('16n',t,0.12); }, ['x',null,'x',null,'x',null,'x',null], '8n');
+    kickSeq.start(0); snareSeq.start(0); hatSeq.start(0);
+    const secPerBar = (60 / this._bpm) * 4;
+    const barLoop = new Tone.Loop((t) => this._onBar(t), `${secPerBar}s`);
+    barLoop.start(0);
+    this._seqs = [kickSeq, snareSeq, hatSeq, barLoop];
+  }
+
+  _onBar(time) {
+    this._barCount++;
+    if (!this._prog || !this._lockedKey) return;
+    const { bass, poly, mel, chordsCh, melCh } = this._tone;
+    const rootMap = { C:'C3','C#':'C#3',D:'D3','D#':'D#3',E:'E3',F:'F3','F#':'F#3',G:'G3','G#':'G#3',A:'A3','A#':'A#3',B:'B3' };
+    const chordRoot = rootMap[this._lockedKey] || 'C3';
+    const chord = this._prog[this._barCount % this._prog.length].map(n => Tone.Frequency(chordRoot).transpose(n).toNote());
+    const secPerBar = (60 / this._bpm) * 4;
+    // Fade channels in gradually
+    if (chordsCh.gain.value < 0.99) chordsCh.gain.rampTo(1, 2);
+    if (melCh.gain.value < 0.79 && this._barCount > 2) melCh.gain.rampTo(0.8, 2);
+    const bassNote = Tone.Frequency(chord[0]).transpose(-12).toNote();
+    bass.triggerAttackRelease(bassNote, '4n', time, 0.55);
+    bass.triggerAttackRelease(bassNote, '8n', time + secPerBar * 0.5, 0.4);
+    const cdur = `${(secPerBar * 0.9).toFixed(3)}s`;
+    poly.triggerAttackRelease(chord, cdur, time, 0.32);
+    // Sparse melody fill — 3 notes per bar
+    if (melCh.gain.value > 0.1) {
+      const SI = MOOD_SCALES[this._mood] ?? MOOD_SCALES.happy;
+      const NI = { C:0,'C#':1,D:2,'D#':3,E:4,F:5,'F#':6,G:7,'G#':8,A:9,'A#':10,B:11 };
+      const rootPc = NI[this._lockedKey] ?? 0;
+      const pitches = SI.map(v => Tone.Frequency(rootPc + v + 60, 'midi').toNote());
+      const pat = [0,2,4,2,4,5];
+      for (let i = 0; i < 3; i++) {
+        mel.triggerAttackRelease(pitches[pat[i] % pitches.length], '8n', time + secPerBar * (i / 4), 0.4);
+      }
+    }
+  }
+
+  _detectLoop() {
+    if (!this._running) return;
+    this._frameCount++;
+    if (this._frameCount % 3 === 0 && this._analyser) {
+      this._analyser.getFloatTimeDomainData(this._pitchBuf);
+      const result = detectPitch(this._pitchBuf, this._nativeAC.sampleRate);
+      if (result && result.confidence > 0.35) {
+        const midi = Math.round(69 + 12 * Math.log2(result.freq / 440));
+        if (midi >= 48 && midi <= 96) {
+          this._midiAccum.push(midi);
+          const n = this._midiAccum.length;
+          // Estimate key after 8 notes, update every 4 after that
+          if (n >= 8 && (n === 8 || n % 4 === 0)) {
+            const est = estimateKey(this._midiAccum);
+            this._lockedKey = est.key; this._lockedScale = est.scale;
+            if (!this._prog) {
+              const fa = { key: est.key, scale: est.scale, bpm: this._bpm, phrases: [], pitchContour: [], durationSec: 30, mood: this._mood };
+              this._prog = pickProgression(fa, this._mood, this._style, Math.floor(Math.random() * 10000));
+            }
+            if (!this._keyLocked) {
+              this._keyLocked = true;
+              this._onUpdate?.({ status: `Key: ${est.key} ${est.scale} — backing emerging…`, keyLocked: true, key: est.key, scale: est.scale });
+            }
+          }
+        }
+      }
+    }
+    this._rafId = requestAnimationFrame(() => this._detectLoop());
+  }
+
+  async stop() {
+    this._running = false;
+    if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = null; }
+    // Stop sequencers
+    for (const seq of this._seqs) { try { seq.stop(0); seq.dispose(); } catch {} }
+    this._seqs = [];
+    Tone.Transport.stop(); Tone.Transport.cancel();
+    // Capture voice
+    let vocalBlob = null;
+    if (this._recorder && this._recorder.state !== 'inactive') {
+      vocalBlob = await new Promise(res => {
+        this._recorder.onstop = () => res(new Blob(this._chunks, { type: this._recorder.mimeType || 'audio/webm' }));
+        this._recorder.stop();
+      });
+    }
+    this._stream?.getTracks().forEach(t => t.stop());
+    if (this._nativeAC) { try { await this._nativeAC.close(); } catch {} this._nativeAC = null; }
+    this._disposeInstruments();
+    const key = this._lockedKey || 'C', scale = this._lockedScale || 'major';
+    const bpm = this._bpm, mood = this._mood, style = this._style;
+    const secPerBar = (60 / bpm) * 4, totalBars = Math.max(this._barCount, 4);
+    const fakeAnalysis = {
+      key, scale, bpm, mood, styleSuggestion: style,
+      durationSec: totalBars * secPerBar,
+      pitchContour: this._midiAccum.map((m, i) => ({ time: i * 0.25, midi: m, confidence: 0.8 })),
+      phrases: Array.from({ length: totalBars }, (_, i) => ({ start: i * secPerBar, end: (i + 1) * secPerBar, energy: 0.6 })),
+    };
+    return { fakeAnalysis, vocalBlob, style, mood };
+  }
+}
+
 class PlaybackEngine {
   constructor() {
     this.voice = new Audio();   // plain element for playVoice() only
@@ -1380,4 +1614,74 @@ document.getElementById('addToTimelineBtn').onclick = () => {
 document.getElementById('playTimelineBtn').onclick = () => {
   if (masterTimeline._playing) { masterTimeline.stop(); return; }
   masterTimeline.play(generatedResult);
+};
+
+// ── Live Jam wiring ────────────────────────────────────────────────────────────
+
+const liveJam = new LiveJamEngine();
+const jamStatusEl = document.getElementById('jamStatus');
+const startJamBtn = document.getElementById('startJamBtn');
+const stopJamBtn = document.getElementById('stopJamBtn');
+
+startJamBtn.onclick = async () => {
+  if (!navigator.mediaDevices?.getUserMedia) { jamStatusEl.textContent = 'Mic not available on this browser.'; return; }
+  startJamBtn.disabled = true;
+  stopJamBtn.disabled = false;
+  recordBtn.disabled = true;
+  const bpmVal = parseInt(document.getElementById('jamBpmInput').value);
+  const bpm = (!isNaN(bpmVal) && bpmVal >= 40 && bpmVal <= 220) ? bpmVal : 90;
+  const style = document.getElementById('jamStyleSelect').value.toLowerCase();
+  const mood = document.getElementById('jamMoodSelect').value.toLowerCase();
+  try {
+    await liveJam.start({
+      bpm, style, mood,
+      onUpdate: ({ status }) => { jamStatusEl.textContent = status; },
+    });
+  } catch (err) {
+    jamStatusEl.textContent = 'Could not start jam: ' + (err.message || err);
+    startJamBtn.disabled = false; stopJamBtn.disabled = true; recordBtn.disabled = false;
+  }
+};
+
+stopJamBtn.onclick = async () => {
+  stopJamBtn.disabled = true;
+  jamStatusEl.textContent = 'Saving jam…';
+  let res;
+  try { res = await liveJam.stop(); } catch (err) {
+    jamStatusEl.textContent = 'Stop error: ' + (err.message || err);
+    startJamBtn.disabled = false; recordBtn.disabled = false; return;
+  }
+  startJamBtn.disabled = false; recordBtn.disabled = false;
+  jamStatusEl.textContent = 'Generating backing track from jam…';
+  if (res.vocalBlob) setVocal(res.vocalBlob);
+  analysis = res.fakeAnalysis;
+  // Pre-fill mood/style selectors to match what was jammed
+  const styleMatch = [...document.getElementById('styleSelect').options].find(o => o.value.toLowerCase() === res.style || o.text.toLowerCase() === res.style);
+  if (styleMatch) styleSelect.value = styleMatch.value;
+  const moodMatch = [...document.getElementById('moodSelect').options].find(o => o.text.toLowerCase() === res.mood);
+  if (moodMatch) moodSelect.value = moodMatch.value;
+  stateMachine.set('generating');
+  try {
+    const humanize = parseInt(document.getElementById('humanizeToggle').value) / 100;
+    const instruments = {
+      melody: document.getElementById('melodyInstrument').value,
+      bass:   document.getElementById('bassInstrument').value,
+      drums:  document.getElementById('drumKit').value,
+    };
+    generatedResult = await generator.generate(res.fakeAnalysis, {
+      mood: res.mood, style: res.style, length: 'match', instruments,
+      bpmOverride: res.fakeAnalysis.bpm, humanize,
+    });
+    document.getElementById('bpmInput').value = generatedResult.effectiveBpm;
+    stateMachine.set('generated');
+    showScreen('screen-generated');
+    applyTuning();
+    trackView.setData(generatedResult);
+    document.getElementById('track-view-wrap').style.display = 'block';
+    jamStatusEl.textContent = `Jam saved — key: ${res.fakeAnalysis.key} ${res.fakeAnalysis.scale}`;
+    debug.backing = `jam (${generatedResult.bars} bars, ${generatedResult.totalSec.toFixed(1)}s)`; setDebug();
+  } catch (err) {
+    jamStatusEl.textContent = 'Generation failed: ' + (err.message || err);
+    stateMachine.set('idle');
+  }
 };

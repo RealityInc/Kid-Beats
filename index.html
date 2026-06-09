@@ -77,6 +77,29 @@
       </div>
       <div id="status" class="muted">Ready.</div>
       <div class="row"><button id="analyzeBtn" disabled>Analyze Vocal</button></div>
+
+      <!-- Live Jam -->
+      <div style="border-top:1px solid #2c3446;margin-top:10px;padding-top:10px;">
+        <div class="row" style="align-items:center;flex-wrap:wrap;gap:8px;">
+          <span style="font-weight:bold;font-size:0.9rem;">🎸 Live Jam</span>
+          <label>Style
+            <select id="jamStyleSelect">
+              <option>Pop</option><option>Hip-Hop</option><option>Rock</option>
+              <option>Dance</option><option>Country</option><option>Weird Electro</option>
+            </select>
+          </label>
+          <label>Mood
+            <select id="jamMoodSelect">
+              <option>Happy</option><option>Sad</option><option>Chill</option>
+              <option>Spooky</option><option>Silly</option><option>Epic</option>
+            </select>
+          </label>
+          <label>BPM <input type="number" id="jamBpmInput" min="40" max="220" value="90" style="width:58px"></label>
+          <button id="startJamBtn">▶ Start Jam</button>
+          <button id="stopJamBtn" disabled>⏹ Stop &amp; Save</button>
+        </div>
+        <div id="jamStatus" class="muted" style="font-size:0.85rem;margin-top:4px;min-height:1.2em;"></div>
+      </div>
     </section>
 
     <section id="screen-analysis" class="screen card">
