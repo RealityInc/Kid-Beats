@@ -203,11 +203,15 @@ const MOOD_SCALES = {
   spooky: [0,2,3,5,7,8,11], silly: [0,2,4,7,9], epic: [0,2,3,5,7,9,10],
 };
 
-function pickProgression(analysis, mood, style, seed) {
+function progressionPool(mood, style) {
   const styleMap = STYLE_PROGRESSIONS[style];
-  const pool = styleMap
+  return styleMap
     ? (styleMap[mood] ?? styleMap.happy ?? Object.values(styleMap)[0])
     : (MOOD_PROGRESSIONS[mood] ?? MOOD_PROGRESSIONS.happy);
+}
+
+function pickProgression(analysis, mood, style, seed) {
+  const pool = progressionPool(mood, style);
   const NI = { C:0,'C#':1,D:2,'D#':3,E:4,F:5,'F#':6,G:7,'G#':8,A:9,'A#':10,B:11 };
   const ki = NI[analysis.key] ?? 0;
   const bpmInt = typeof analysis.bpm === 'number' ? Math.round(analysis.bpm) : 90;
@@ -257,11 +261,46 @@ class BackingTrackGenerator {
     const rawBpm = typeof analysis.bpm === 'number' ? analysis.bpm : (bpmMin + bpmMax) / 2;
     const effectiveBpm = bpmOverride ? Math.max(40, Math.min(220, bpmOverride)) : Math.max(bpmMin, Math.min(bpmMax, rawBpm));
     Tone.Transport.bpm.value = effectiveBpm;
-    const secPerBar = (60 / effectiveBpm) * 4;
+    const beatSec = 60 / effectiveBpm;
+
+    // Time signature: explicit choice, or auto-detected from the vocal's accent pattern
+    const meterDefs = { '4/4': { beatsPerBar: 4 }, '3/4': { beatsPerBar: 3 }, '6/8': { beatsPerBar: 3, compound: true } };
+    const tsOpt = options.timeSignature && meterDefs[options.timeSignature] ? options.timeSignature : 'auto';
+    const baseMeter = tsOpt !== 'auto' ? tsOpt : (analysis.meter?.beatsPerBar === 3 ? '3/4' : '4/4');
+    const secPerBar = beatSec * meterDefs[baseMeter].beatsPerBar;
+
     let target = options.length === 'match' ? analysis.durationSec : Number(options.length);
     target = Math.max(target, analysis.durationSec);
-    const bars = Math.ceil(target / secPerBar);
-    const totalSec = bars * secPerBar;
+    // One extra beat of headroom so beat-aligned vocal sync never overruns the end
+    const bars = Math.ceil((target + beatSec) / secPerBar);
+
+    // Per-bar plan — supports a sudden mid-song style and/or meter switch-up
+    const switchUp = options.switchUp || 'none';
+    const styleFlip = { pop:'rock', rock:'hip-hop', 'hip-hop':'dance', dance:'weird electro', country:'rock', 'weird electro':'pop' };
+    const introBars = 2;
+    const outroStart = Math.max(0, bars - 2);
+    let switchBar = -1, altStyle = style, altMeter = baseMeter;
+    if (switchUp !== 'none' && bars >= 12) {
+      switchBar = introBars + Math.round((outroStart - introBars) / 2 / 4) * 4;
+      if (switchBar <= introBars || switchBar >= outroStart) switchBar = -1;
+    }
+    if (switchBar > 0) {
+      if (switchUp === 'style' || switchUp === 'surprise') altStyle = styleFlip[style] ?? 'rock';
+      if (switchUp === 'waltz' || switchUp === 'surprise') altMeter = baseMeter === '3/4' ? '4/4' : '3/4';
+    }
+    const plan = [];
+    {
+      let cursor = 0;
+      for (let bar = 0; bar < bars; bar++) {
+        const inAlt = switchBar > 0 && bar >= switchBar;
+        const bMeter = inAlt ? altMeter : baseMeter;
+        const bpb = meterDefs[bMeter].beatsPerBar;
+        plan.push({ bar, t: cursor, style: inAlt ? altStyle : style, meter: bMeter, beatsPerBar: bpb,
+                    secPerBar: beatSec * bpb, compound: !!meterDefs[bMeter].compound, switched: inAlt });
+        cursor += beatSec * bpb;
+      }
+    }
+    const totalSec = plan[plan.length - 1].t + plan[plan.length - 1].secPerBar;
 
     // Drum kit — override with selected kit or fall back to style/mood defaults
     const kitPresets = {
@@ -359,16 +398,25 @@ class BackingTrackGenerator {
 
     // Melody vibrato — gentle pitch wobble for spooky/sad expressiveness
     const vibrato = (mood === 'spooky' || mood === 'sad') ? new Tone.Vibrato({ frequency: 4.5, depth: 0.15 }) : null;
+    // Duck stage — melody/chords/arp pass through this gain so "Play Together"
+    // can dip the mid-range backing under the child's sung phrases, keeping the
+    // voice on top of the mix. Bass, kick, and percussion stay at full level.
+    const duckCh = new Tone.Gain(1);
+    duckCh.connect(bus);
     // Use explicit connect() throughout — chain() on shared nodes (percCh) would
     // register percCh→bus twice in Tone.js's internal graph, causing silent failure.
     melody.connect(melCh); melCh.connect(panMel);
-    if (vibrato) { panMel.connect(vibrato); vibrato.connect(bus); } else { panMel.connect(bus); }
+    if (vibrato) { panMel.connect(vibrato); vibrato.connect(duckCh); } else { panMel.connect(duckCh); }
 
-    // Distortion — grit for rock (shared across poly + bass into bus)
+    // Distortion — grit for rock chords; bass gets its own lighter drive so it
+    // can bypass the duck stage and keep the foundation steady under the vocal
     const dist = isRock ? new Tone.Distortion(0.35) : null;
+    const bassDist = isRock ? new Tone.Distortion(0.25) : null;
     poly.connect(chordsCh); chordsCh.connect(panChords); bass.connect(bassCh);
-    if (dist) { panChords.connect(dist); bassCh.connect(dist); dist.connect(bus); }
-    else      { panChords.connect(bus);  bassCh.connect(bus); }
+    if (dist) { panChords.connect(dist); dist.connect(duckCh); }
+    else      { panChords.connect(duckCh); }
+    if (bassDist) { bassCh.connect(bassDist); bassDist.connect(bus); }
+    else          { bassCh.connect(bus); }
 
     // Snare + hat share percCh — connect each source separately, bus once
     hat.connect(percCh); snare.connect(percCh); percCh.connect(panPerc); panPerc.connect(bus);
@@ -379,17 +427,18 @@ class BackingTrackGenerator {
     const padGain = usePad ? new Tone.Gain(0.28).chain(padReverb, limiter) : null;
     if (pad && padGain) { padCh ? pad.chain(padCh, padGain) : pad.connect(padGain); }
     if (arp) {
-      if (arpCh && panArp) { arp.connect(arpCh); arpCh.connect(panArp); panArp.connect(bus); }
-      else if (arpCh)      { arp.connect(arpCh); arpCh.connect(bus); }
-      else                 { arp.connect(bus); }
+      if (arpCh && panArp) { arp.connect(arpCh); arpCh.connect(panArp); panArp.connect(duckCh); }
+      else if (arpCh)      { arp.connect(arpCh); arpCh.connect(duckCh); }
+      else                 { arp.connect(duckCh); }
     }
     if (openHat) openHat.connect(bus);
 
-    this._nodes = [drum, snare, hat, bass, poly, melody, reverb, delay, limiter, bus,
+    this._nodes = [drum, snare, hat, bass, poly, melody, reverb, delay, limiter, bus, duckCh,
                    melCh, bassCh, chordsCh, kickCh, percCh, panMel, panChords, panPerc];
     if (panArp) this._nodes.push(panArp);
     if (vibrato) this._nodes.push(vibrato);
     if (dist) this._nodes.push(dist);
+    if (bassDist) this._nodes.push(bassDist);
     if (padCh) this._nodes.push(padCh);
     if (arpCh) this._nodes.push(arpCh);
     if (pad) this._nodes.push(pad);
@@ -413,17 +462,53 @@ class BackingTrackGenerator {
     // so each unique recording gets a distinct progression.
     const arrangeSeed = Math.floor(Math.random() * 10000);
     const prog = pickProgression(analysis, mood, style, arrangeSeed);
+    const altProg = altStyle !== style ? pickProgression(analysis, mood, altStyle, arrangeSeed + 1) : prog;
     const SI = MOOD_SCALES[mood] ?? MOOD_SCALES.happy;
 
     const NI = { C:0,'C#':1,D:2,'D#':3,E:4,F:5,'F#':6,G:7,'G#':8,A:9,'A#':10,B:11 };
     const rootPc = NI[analysis.key] ?? 0;
     const scalePcs = SI.map(v => (v + rootPc) % 12);
-    function snapMidi(midi) {
+    function snapTo(midi, pcs) {
       const pc = ((midi % 12) + 12) % 12;
-      let bestPc = scalePcs[0], bestDist = 12;
-      for (const sp of scalePcs) { const d = Math.min(Math.abs(sp-pc), 12-Math.abs(sp-pc)); if (d < bestDist) { bestDist = d; bestPc = sp; } }
+      let bestPc = pcs[0], bestDist = 12;
+      for (const sp of pcs) { const d = Math.min(Math.abs(sp-pc), 12-Math.abs(sp-pc)); if (d < bestDist) { bestDist = d; bestPc = sp; } }
       return midi + ((bestPc - pc + 6) % 12) - 6;
     }
+    const snapMidi = (midi) => snapTo(midi, scalePcs);
+
+    // Vocal harmonization — score each candidate chord against what the child
+    // actually sang inside a bar (confidence-weighted pitch-class match), so the
+    // harmony follows the song instead of marching through a fixed loop.
+    const harmonyContour = (analysis.pitchContour || []).filter(c => c.confidence >= 0.3);
+    const chordPool = [];
+    {
+      const seenCh = new Set();
+      for (const pr of [...progressionPool(mood, style), ...(altStyle !== style ? progressionPool(mood, altStyle) : [])]) {
+        for (const ch of pr) { const k = ch.join(','); if (!seenCh.has(k)) { seenCh.add(k); chordPool.push(ch); } }
+      }
+    }
+    const vocalChordFit = (chordOffsets, startSec, endSec) => {
+      let score = 0, total = 0;
+      for (const c of harmonyContour) {
+        if (c.time < startSec || c.time >= endSec) continue;
+        total += c.confidence;
+        const pc = (((c.midi - rootPc) % 12) + 12) % 12;
+        for (let k = 0; k < chordOffsets.length; k++) {
+          if (((chordOffsets[k] % 12) + 12) % 12 === pc) { score += c.confidence * (k === 0 ? 1.25 : 1); break; }
+        }
+      }
+      return { score, total };
+    };
+    const harmonizeBar = (defaultChord, startSec, endSec) => {
+      const fit = vocalChordFit(defaultChord, startSec, endSec);
+      if (fit.total < 1.5) return defaultChord; // not enough singing in this bar to overrule the progression
+      let best = defaultChord, bestScore = fit.score * 1.15; // default keeps a 15% home advantage
+      for (const cand of chordPool) {
+        const s = vocalChordFit(cand, startSec, endSec).score;
+        if (s > bestScore) { bestScore = s; best = cand; }
+      }
+      return best;
+    };
     const eighthSec = (60 / effectiveBpm) / 2;
     const highConf = (analysis.pitchContour || []).filter(p => p.confidence >= 0.28);
     let melodyMotif, melodySource = 'arpeggio';
@@ -434,7 +519,7 @@ class BackingTrackGenerator {
         let m = p.midi; while (m < 60) m += 12; while (m > 83) m -= 12;
         return { slot, note: Tone.Frequency(snapMidi(m), 'midi').toNote() };
       }).filter(m => { if (seen.has(m.slot)) return false; seen.add(m.slot); return true; });
-      if (candidates.length >= 3) { melodyMotif = candidates.map(m => ({ time: m.slot * eighthSec, note: m.note })); melodySource = 'pitchContour'; }
+      if (candidates.length >= 3) { melodyMotif = candidates.map(m => ({ time: m.slot * eighthSec, frac: (m.slot * eighthSec) / secPerBar, note: m.note })); melodySource = 'pitchContour'; }
     }
     if (!melodyMotif) {
       const pitches = SI.map(v => Tone.Frequency(rootPc + v + 60, 'midi').toNote());
@@ -476,6 +561,7 @@ class BackingTrackGenerator {
       const rhythm = melRhythms[style] || melRhythms[mood] || melRhythms.happy;
       melodyMotif = rhythm.map((r, i) => ({
         time:     r[0] * b,
+        frac:     r[0],
         duration: r[1],
         note:     pitches[pitchPat[i % pitchPat.length] % pitches.length],
       }));
@@ -485,17 +571,16 @@ class BackingTrackGenerator {
     // placed in the second half of the bar (beat 3 onward) for call-and-response feel
     const bMotif = melodyMotif.slice(Math.ceil(melodyMotif.length / 2)).map((m, i) => {
       let midi = 60; try { midi = Tone.Frequency(m.note).toMidi(); } catch {}
-      return { time: secPerBar * 0.5 + i * eighthSec, duration: m.duration || '8n', note: Tone.Frequency(snapMidi(midi + 3), 'midi').toNote() };
+      const time = secPerBar * 0.5 + i * eighthSec;
+      return { time, frac: time / secPerBar, duration: m.duration || '8n', note: Tone.Frequency(snapMidi(midi + 3), 'midi').toNote() };
     });
 
     // Song structure helpers
-    const intro = 2;                          // bars of sparse intro
-    const outro = Math.max(0, bars - 2);      // bar index where outro starts
     const getSection = (bar) => {
-      if (bar < intro) return 'intro';
-      if (bar >= outro) return 'outro';
-      const rel = bar - intro;
-      const span = Math.max(1, outro - intro);
+      if (bar < introBars) return 'intro';
+      if (bar >= outroStart) return 'outro';
+      const rel = bar - introBars;
+      const span = Math.max(1, outroStart - introBars);
       if (rel / span < 0.45) return 'verse';
       return 'chorus';
     };
@@ -528,82 +613,116 @@ class BackingTrackGenerator {
       ? (v) => Math.max(0.05, Math.min(1, v + (Math.random() - 0.5) * humanize * 0.25))
       : (v) => v;
 
-    // Drum patterns
-    const phraseEnergies = analysis.phrases.map(p => p.energy);
+    // Bar energy tracks the vocal's real sung phrases, not fixed windows
+    const phraseList = analysis.phrases || [];
+    const phraseEnergies = phraseList.map(p => p.energy);
     const avgEnergy = phraseEnergies.reduce((a, v) => a + v, 0) / Math.max(1, phraseEnergies.length);
+    const energyAt = (tSec) => {
+      for (const ph of phraseList) { if (tSec >= ph.start && tSec < ph.end) return ph.energy; }
+      return avgEnergy * 0.85; // between phrases / past the vocal — settle slightly
+    };
     const isHalfTime = effectiveBpm < 85 || mood === 'spooky' || mood === 'sad';
     const isDoubletime = effectiveBpm > 115 || mood === 'epic';
-    const kickBeats = is4OnFloor   ? [0, 0.25, 0.5, 0.75]
-                    : isHalfTime   ? [0]
-                    : isDoubletime ? [0, 0.375, 0.5, 0.875]
-                    :                [0, 0.5];
-    const snareBeats = isHalfTime   ? [0.5]
-                     : isDoubletime ? [0.25, 0.5, 0.75]
-                     :                [0.25, 0.75];
-    // Country: no hi-hat (acoustic/brushed feel); hip-hop: sparse; everything else: normal grid
-    const hatDiv = isCountry ? 0 : isHipHop ? 2 : isDoubletime ? 8 : effectiveBpm > 95 ? 4 : 2;
-    const kickSet = new Set(kickBeats.map(f => Math.round(f * 1000)));
-    const hatBeats = Array.from({ length: hatDiv }, (_, i) => i / hatDiv).filter(f => !kickSet.has(Math.round(f * 1000)));
+    // Drum grids per style and meter (fractions of a bar)
+    const patternsFor = (s, meterKey, compound) => {
+      const fourFloor = s === 'dance', hipHop = s === 'hip-hop', country = s === 'country';
+      if (meterKey === '3/4') {
+        return compound
+          ? { kick: [0], snare: [0.5], hatDiv: 6 }                       // 6/8 lilt
+          : { kick: [0], snare: [1/3, 2/3], hatDiv: country ? 0 : 3 };   // waltz oom-pah-pah
+      }
+      const kick = fourFloor      ? [0, 0.25, 0.5, 0.75]
+                 : isHalfTime     ? [0]
+                 : isDoubletime   ? [0, 0.375, 0.5, 0.875]
+                 :                  [0, 0.5];
+      const snare = isHalfTime ? [0.5] : isDoubletime ? [0.25, 0.5, 0.75] : [0.25, 0.75];
+      // Country: no hi-hat (acoustic/brushed feel); hip-hop: sparse; everything else: normal grid
+      const hatDiv = country ? 0 : hipHop ? 2 : isDoubletime ? 8 : effectiveBpm > 95 ? 4 : 2;
+      return { kick, snare, hatDiv };
+    };
+    const hatBeatsFor = (pat) => {
+      const kickSet = new Set(pat.kick.map(f => Math.round(f * 1000)));
+      return Array.from({ length: pat.hatDiv }, (_, i) => i / pat.hatDiv).filter(f => !kickSet.has(Math.round(f * 1000)));
+    };
+    const patternCache = new Map();
 
-    for (let bar = 0; bar < bars; bar++) {
-      const t = bar * secPerBar;
-      const barE = phraseEnergies[Math.floor(t / 4)] ?? avgEnergy;
+    for (const p of plan) {
+      const { bar, t, secPerBar: spb, beatsPerBar } = p;
+      const bStyle = p.style;
+      const bRock = bStyle === 'rock', bCountry = bStyle === 'country', bHipHop = bStyle === 'hip-hop';
+      const patKey = `${bStyle}|${p.meter}`;
+      if (!patternCache.has(patKey)) {
+        const base = patternsFor(bStyle, p.meter, p.compound);
+        patternCache.set(patKey, { ...base, hatBeats: hatBeatsFor(base) });
+      }
+      const pat = patternCache.get(patKey);
+      const barE = energyAt(t);
       const section = getSection(bar);
       const isIntro = section === 'intro';
       const isOutro = section === 'outro';
-      const isVerse = section === 'verse';
-      const isChorus = section === 'chorus';
       const secVelMult = isIntro ? 0.55 : isOutro ? 0.65 : 1.0;
       const dynVel = Math.max(0.25, Math.min(1.0, barE / Math.max(avgEnergy * 1.2, 0.001))) * secVelMult;
       // Chords voiced one octave above the bass root to separate frequency ranges
       const chordRoot = Tone.Frequency(root).transpose(12).toNote();
-      const chord = prog[bar % prog.length].map((n) => Tone.Frequency(chordRoot).transpose(n).toNote());
+      const activeProg = p.switched ? altProg : prog;
+      const progIdx = (p.switched ? bar - switchBar : bar) % activeProg.length;
+      // Harmony follows the vocal — substitute a better-fitting chord when the
+      // child clearly sang something else in this bar
+      const chordOff = harmonizeBar(activeProg[progIdx], t, t + spb);
+      const chord = chordOff.map((n) => Tone.Frequency(chordRoot).transpose(n).toNote());
+      const chordPcs = chordOff.map(o => (((o + rootPc) % 12) + 12) % 12);
+      const lastBeatFrac = (beatsPerBar - 1) / beatsPerBar;
 
       // Drum fill: snare roll on last beat of every 4th bar (except intro)
       const isFillBar = !isIntro && bar > 0 && bar % 4 === 3;
+      const isSwitchBar = bar === switchBar;
 
-      kickBeats.forEach(f => {
-        const st = hTime(t + secPerBar * f), kdur = isHipHop ? '4n' : '8n', kv = hVel(0.65 + dynVel * 0.3);
+      pat.kick.forEach(f => {
+        const st = hTime(t + spb * f), kdur = bHipHop ? '4n' : '8n';
+        const kv = hVel((isSwitchBar && f === 0 ? 0.9 : 0.65) + dynVel * 0.3); // accent the switch-up downbeat
         sched('kick', { note:'C1', duration:kdur, velocity:kv }, (time) => drum.triggerAttackRelease('C1', kdur, time, kv), st);
       });
-      snareBeats.forEach(f => {
-        if (isFillBar && f >= 0.75) return; // last beat replaced by fill below
-        const st = hTime(t + secPerBar * f), sv = hVel(isCountry ? 0.12 + dynVel * 0.1 : 0.25 + dynVel * 0.2);
+      pat.snare.forEach(f => {
+        if (isFillBar && f >= lastBeatFrac) return; // last beat replaced by fill below
+        const st = hTime(t + spb * f), sv = hVel(bCountry ? 0.12 + dynVel * 0.1 : 0.25 + dynVel * 0.2);
         sched('snare', { duration:'8n', velocity:sv }, (time) => snare.triggerAttackRelease('8n', time, sv), st);
       });
       if (isFillBar) {
-        // 4-hit snare roll on the last beat of the bar
-        [0, 0.0625, 0.125, 0.1875].forEach(off => {
-          const ft = hTime(t + secPerBar * (0.75 + off)), fv = hVel(0.3 + dynVel * 0.25);
+        // 4-hit snare roll filling the last beat of the bar
+        const fillStep = 1 / (beatsPerBar * 4);
+        [0, 1, 2, 3].forEach(k => {
+          const ft = hTime(t + spb * (lastBeatFrac + k * fillStep)), fv = hVel(0.3 + dynVel * 0.25);
           sched('snare', { duration:'16n', velocity:fv }, (time) => snare.triggerAttackRelease('16n', time, fv), ft);
         });
       }
-      hatBeats.forEach(f => {
-        const st = hTime(t + secPerBar * f), hv = hVel(0.08 + dynVel * 0.15);
+      pat.hatBeats.forEach(f => {
+        const st = hTime(t + spb * f), hv = hVel(0.08 + dynVel * 0.15);
         sched('hat', { duration:'16n', velocity:hv }, (time) => hat.triggerAttackRelease('16n', time, hv), st);
       });
 
       // Chords — skip in intro; genre-specific patterns otherwise
       if (!isIntro) {
-        if (isHipHop) {
+        if (bHipHop) {
           const cv1 = hVel(0.3), cv2 = hVel(0.22);
           sched('chords', { notes:chord, duration:'4n', velocity:cv1 }, (time) => poly.triggerAttackRelease(chord, '4n', time, cv1), hTime(t));
-          sched('chords', { notes:chord, duration:'8n', velocity:cv2 }, (time) => poly.triggerAttackRelease(chord, '8n', time, cv2), hTime(t + secPerBar * 0.375));
-        } else if (isCountry) {
+          sched('chords', { notes:chord, duration:'8n', velocity:cv2 }, (time) => poly.triggerAttackRelease(chord, '8n', time, cv2), hTime(t + spb * 0.375));
+        } else if (bCountry) {
           const strm = chord.slice(0, 2), cs = hVel(0.32);
-          sched('chords', { notes:strm, duration:'8n', velocity:cs }, (time) => poly.triggerAttackRelease(strm, '8n', time, cs), hTime(t + secPerBar * 0.25));
-          sched('chords', { notes:strm, duration:'8n', velocity:cs }, (time) => poly.triggerAttackRelease(strm, '8n', time, cs), hTime(t + secPerBar * 0.75));
-        } else if (isRock) {
-          [0, 0.25, 0.5, 0.75].forEach(f => {
+          // Strums land on the offbeats of whatever meter this bar is in
+          [0.25, 0.75].map(f => f * 4 / beatsPerBar).filter(f => f < 1).forEach(f => {
+            sched('chords', { notes:strm, duration:'8n', velocity:cs }, (time) => poly.triggerAttackRelease(strm, '8n', time, cs), hTime(t + spb * f));
+          });
+        } else if (bRock) {
+          Array.from({ length: beatsPerBar }, (_, i) => i / beatsPerBar).forEach(f => {
             const rv = hVel(0.38);
-            sched('chords', { notes:chord, duration:'16n', velocity:rv }, (time) => poly.triggerAttackRelease(chord, '16n', time, rv), hTime(t + secPerBar * f));
+            sched('chords', { notes:chord, duration:'16n', velocity:rv }, (time) => poly.triggerAttackRelease(chord, '16n', time, rv), hTime(t + spb * f));
           });
         } else if (mood === 'epic') {
-          const edur = `${(secPerBar * 0.45).toFixed(3)}s`, ev1 = hVel(0.4), ev2 = hVel(0.35);
+          const edur = `${(spb * 0.45).toFixed(3)}s`, ev1 = hVel(0.4), ev2 = hVel(0.35);
           sched('chords', { notes:chord, duration:edur, velocity:ev1 }, (time) => poly.triggerAttackRelease(chord, edur, time, ev1), hTime(t));
-          sched('chords', { notes:chord, duration:edur, velocity:ev2 }, (time) => poly.triggerAttackRelease(chord, edur, time, ev2), hTime(t + secPerBar * 0.5));
+          sched('chords', { notes:chord, duration:edur, velocity:ev2 }, (time) => poly.triggerAttackRelease(chord, edur, time, ev2), hTime(t + spb * 0.5));
         } else {
-          const cdur = `${(secPerBar * 0.95).toFixed(3)}s`, cdv = hVel(0.35);
+          const cdur = `${(spb * 0.95).toFixed(3)}s`, cdv = hVel(0.35);
           sched('chords', { notes:chord, duration:cdur, velocity:cdv }, (time) => poly.triggerAttackRelease(chord, cdur, time, cdv), hTime(t));
         }
       }
@@ -612,23 +731,23 @@ class BackingTrackGenerator {
       // Use the chord's actual root (first note), one octave down for proper bass register
       const bassNote = Tone.Frequency(chord[0]).transpose(-12).toNote();
       const bassNote2 = chord[2] ? Tone.Frequency(chord[2]).transpose(-12).toNote() : bassNote;
-      if (isRock) {
-        [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875].forEach(f => {
+      if (bRock) {
+        Array.from({ length: beatsPerBar * 2 }, (_, i) => i / (beatsPerBar * 2)).forEach(f => {
           const bv = hVel(0.5 + dynVel * 0.15);
-          sched('bass', { note:bassNote, duration:'16n', velocity:bv }, (time) => bass.triggerAttackRelease(bassNote, '16n', time, bv), hTime(t + secPerBar * f));
+          sched('bass', { note:bassNote, duration:'16n', velocity:bv }, (time) => bass.triggerAttackRelease(bassNote, '16n', time, bv), hTime(t + spb * f));
         });
-      } else if (isCountry) {
+      } else if (bCountry) {
         const bv1 = hVel(0.65), bv2 = hVel(0.55);
         sched('bass', { note:bassNote, duration:'8n', velocity:bv1 }, (time) => bass.triggerAttackRelease(bassNote, '8n', time, bv1), hTime(t));
-        sched('bass', { note:bassNote2, duration:'8n', velocity:bv2 }, (time) => bass.triggerAttackRelease(bassNote2, '8n', time, bv2), hTime(t + secPerBar * 0.5));
-      } else if (isHipHop) {
-        const bldur = `${(secPerBar * 0.35).toFixed(3)}s`, bv1 = hVel(0.6), bv2 = hVel(0.4);
+        sched('bass', { note:bassNote2, duration:'8n', velocity:bv2 }, (time) => bass.triggerAttackRelease(bassNote2, '8n', time, bv2), hTime(t + spb * 0.5));
+      } else if (bHipHop) {
+        const bldur = `${(spb * 0.35).toFixed(3)}s`, bv1 = hVel(0.6), bv2 = hVel(0.4);
         sched('bass', { note:bassNote, duration:bldur, velocity:bv1 }, (time) => bass.triggerAttackRelease(bassNote, bldur, time, bv1), hTime(t));
-        sched('bass', { note:bassNote, duration:'16n', velocity:bv2 }, (time) => bass.triggerAttackRelease(bassNote, '16n', time, bv2), hTime(t + secPerBar * 0.375));
+        sched('bass', { note:bassNote, duration:'16n', velocity:bv2 }, (time) => bass.triggerAttackRelease(bassNote, '16n', time, bv2), hTime(t + spb * 0.375));
       } else {
         const bv1 = hVel(0.6), bv2 = hVel(0.45);
-        sched('bass', { note:bassNote, duration:'8n', velocity:bv1 }, (time) => bass.triggerAttackRelease(bassNote, '8n', time, bv1), hTime(t + secPerBar * 0.01));
-        sched('bass', { note:bassNote2, duration:'8n', velocity:bv2 }, (time) => bass.triggerAttackRelease(bassNote2, '8n', time, bv2), hTime(t + secPerBar * 0.5));
+        sched('bass', { note:bassNote, duration:'8n', velocity:bv1 }, (time) => bass.triggerAttackRelease(bassNote, '8n', time, bv1), hTime(t + spb * 0.01));
+        sched('bass', { note:bassNote2, duration:'8n', velocity:bv2 }, (time) => bass.triggerAttackRelease(bassNote2, '8n', time, bv2), hTime(t + spb * 0.5));
       }
 
       // Melody — phrase pattern + voice-aware gaps; absent in intro and outro
@@ -639,29 +758,37 @@ class BackingTrackGenerator {
           playMotif.forEach(m => {
             // Leave space where the voice was singing — fills the gaps naturally
             if (melodySlotActive(m.time)) return;
+            if (m.frac >= 1) return;
+            // On-beat notes snap to chord tones so the lead always agrees with the harmony
+            let note = m.note;
+            const beatPos = m.frac * beatsPerBar;
+            if (Math.abs(beatPos - Math.round(beatPos)) < 0.06) {
+              try { note = Tone.Frequency(snapTo(Tone.Frequency(m.note).toMidi(), chordPcs), 'midi').toNote(); } catch {}
+            }
             const mv = hVel(phraseType === 'A' ? 0.55 : 0.48), dur = m.duration || '8n';
-            sched('melody', { note:m.note, duration:dur, velocity:mv }, (time) => melody.triggerAttackRelease(m.note, dur, time, mv), hTime(t + m.time));
+            sched('melody', { note, duration:dur, velocity:mv }, (time) => melody.triggerAttackRelease(note, dur, time, mv), hTime(t + m.frac * spb));
           });
         }
       }
 
       if (usePad && pad && bar % 2 === 0 && !isIntro) {
         const padNotes = chord.slice(0, 2).map(n => Tone.Frequency(n).transpose(12).toNote());
-        const pdur = `${(secPerBar * 1.9).toFixed(3)}s`, pv = hVel(0.25);
+        const pdur = `${(spb * 1.9).toFixed(3)}s`, pv = hVel(0.25);
         sched('pad', { notes:padNotes, duration:pdur, velocity:pv }, (time) => pad.triggerAttackRelease(padNotes, pdur, time, pv), hTime(t));
       }
 
       if (useArp && arp && !isIntro) {
         const arpBase = chord.map(n => Tone.Frequency(n).transpose(12).toNote());
         const arpExt = [...arpBase, ...arpBase.map(n => Tone.Frequency(n).transpose(12).toNote())];
-        for (let i = 0; i < 8; i++) {
+        const arpSlots = beatsPerBar * 2;
+        for (let i = 0; i < arpSlots; i++) {
           const av = hVel(0.28 + dynVel * 0.12), an = arpExt[i % arpExt.length];
-          sched('arp', { note:an, duration:'16n', velocity:av }, (time) => arp.triggerAttackRelease(an, '16n', time, av), hTime(t + i * eighthSec));
+          sched('arp', { note:an, duration:'16n', velocity:av }, (time) => arp.triggerAttackRelease(an, '16n', time, av), hTime(t + i * (spb / arpSlots)));
         }
       }
 
       if (useOpenHat && openHat && bar % 2 === 1) {
-        Tone.Transport.schedule((time) => openHat.triggerAttackRelease('16n', time, 0.14), t + secPerBar * 0.75);
+        Tone.Transport.schedule((time) => openHat.triggerAttackRelease('16n', time, 0.14), t + spb * lastBeatFrac);
       }
     }
     Tone.Transport.swing = isHipHop ? 0.2 : (is4OnFloor || isRock) ? 0.02 : isCountry ? 0.06 : 0.08;
@@ -669,7 +796,12 @@ class BackingTrackGenerator {
     const channels = { melody:melCh, bass:bassCh, chords:chordsCh, kick:kickCh, perc:percCh,
                        ...(padCh ? {pad:padCh} : {}), ...(arpCh ? {arp:arpCh} : {}) };
     const synths = { melody, bass, poly, drum, snare, hat };
-    return { bars, totalSec, effectiveBpm, drumMode: isHalfTime ? 'half-time' : isDoubletime ? 'double-time' : 'standard', melodySource, tracks, channels, synths, scalePcs };
+    return { bars, totalSec, effectiveBpm, beatSec,
+             meter: baseMeter, switchAtSec: switchBar > 0 ? plan[switchBar].t : null,
+             switchInfo: switchBar > 0 ? { bar: switchBar, style: altStyle, meter: altMeter } : null,
+             duck: duckCh,
+             drumMode: isHalfTime ? 'half-time' : isDoubletime ? 'double-time' : 'standard',
+             melodySource, tracks, channels, synths, scalePcs };
   }
 }
 
@@ -1137,11 +1269,33 @@ class LiveJamEngine {
     this._nodes = []; this._seqs = []; this._pitchBuf = null;
     this._frameCount = 0; this._bpm = 90; this._style = 'pop'; this._mood = 'happy';
     this._rmsAvg = 0; this._inOnset = false; this._onsetTimes = [];
+    this._meter = '4/4'; this._pending = null;
   }
 
-  async start({ bpm, style, mood, onUpdate }) {
+  // Live controls — changes queue up and land cleanly on the next bar boundary
+  setStyle(s) { if (!this._running) { this._style = s; return; } this._pending = { ...(this._pending || {}), style: s }; }
+  setMood(m)  { if (!this._running) { this._mood = m; return; }  this._pending = { ...(this._pending || {}), mood: m }; }
+  setMeter(ts){ if (!this._running) { this._meter = ts; return; } this._pending = { ...(this._pending || {}), meter: ts }; }
+  get running() { return this._running; }
+
+  _beatsPerBar() { return this._meter === '3/4' ? 3 : 4; }
+
+  _jamPatterns() {
+    if (this._meter === '3/4') {
+      return { kick: ['C1', null, null], snare: [null, 'x', 'x'], hat: ['x', null, 'x', null, 'x', null] };
+    }
+    const is4OnFloor = this._style === 'dance';
+    return {
+      kick: is4OnFloor ? ['C1', 'C1', 'C1', 'C1'] : ['C1', null, 'C1', null],
+      snare: [null, 'x', null, 'x'],
+      hat: ['x', null, 'x', null, 'x', null, 'x', null],
+    };
+  }
+
+  async start({ bpm, style, mood, meter, onUpdate }) {
     await Tone.start();
     this._bpm = bpm; this._style = style; this._mood = mood; this._onUpdate = onUpdate;
+    this._meter = meter === '3/4' ? '3/4' : '4/4'; this._pending = null;
     this._running = true; this._midiAccum = []; this._barCount = 0;
     this._keyLocked = false; this._lockedKey = null; this._lockedScale = null;
     this._prog = null; this._chunks = []; this._frameCount = 0;
@@ -1203,26 +1357,66 @@ class LiveJamEngine {
 
   _startSequencers() {
     const { drum, snare, hat } = this._tone;
-    const is4OnFloor = this._style === 'dance';
-    const kickPat = is4OnFloor ? ['C1','C1','C1','C1'] : ['C1',null,'C1',null];
-    const kickSeq = new Tone.Sequence((t, n) => { if (n) drum.triggerAttackRelease(n,'8n',t,0.7); }, kickPat, '4n');
-    const snareSeq = new Tone.Sequence((t, n) => { if (n) snare.triggerAttackRelease('8n',t,0.35); }, [null,'x',null,'x'], '4n');
-    const hatSeq = new Tone.Sequence((t, n) => { if (n) hat.triggerAttackRelease('16n',t,0.12); }, ['x',null,'x',null,'x',null,'x',null], '8n');
+    const pats = this._jamPatterns();
+    Tone.Transport.timeSignature = this._beatsPerBar();
+    const kickSeq = new Tone.Sequence((t, n) => { if (n) drum.triggerAttackRelease(n,'8n',t,0.7); }, pats.kick, '4n');
+    const snareSeq = new Tone.Sequence((t, n) => { if (n) snare.triggerAttackRelease('8n',t,0.35); }, pats.snare, '4n');
+    const hatSeq = new Tone.Sequence((t, n) => { if (n) hat.triggerAttackRelease('16n',t,0.12); }, pats.hat, '8n');
     kickSeq.start(0); snareSeq.start(0); hatSeq.start(0);
-    const secPerBar = (60 / this._bpm) * 4;
-    const barLoop = new Tone.Loop((t) => this._onBar(t), `${secPerBar}s`);
+    // '1m' follows Transport bpm AND timeSignature — stays in step through
+    // live tempo ramps and meter switches
+    const barLoop = new Tone.Loop((t) => this._onBar(t), '1m');
     barLoop.start(0);
+    this._kickSeq = kickSeq; this._snareSeq = snareSeq; this._hatSeq = hatSeq;
     this._seqs = [kickSeq, snareSeq, hatSeq, barLoop];
+  }
+
+  _applyPending() {
+    const pend = this._pending;
+    if (!pend) return;
+    this._pending = null;
+    if (pend.style) this._style = pend.style;
+    if (pend.mood)  this._mood = pend.mood;
+    if (pend.meter) this._meter = pend.meter;
+    const pats = this._jamPatterns();
+    this._kickSeq.events = pats.kick; this._snareSeq.events = pats.snare; this._hatSeq.events = pats.hat;
+    Tone.Transport.timeSignature = this._beatsPerBar();
+    if (pend.style && this._lockedKey) {
+      const fa = { key: this._lockedKey, scale: this._lockedScale, bpm: this._bpm, phrases: [], pitchContour: [], durationSec: 30, mood: this._mood };
+      this._prog = pickProgression(fa, this._mood, this._style, Math.floor(Math.random() * 10000));
+    }
+    this._onUpdate?.({ status: `Switched up! ${this._style} · ${this._mood} · ${this._meter}`, keyLocked: this._keyLocked });
+  }
+
+  // Among the progression's chords, prefer the one matching the recently sung
+  // notes — the harmony follows the child instead of marching through a loop.
+  _pickLiveChord() {
+    const expected = this._prog[this._barCount % this._prog.length];
+    const recent = this._midiAccum.slice(-10);
+    if (recent.length < 3) return expected;
+    const NI = { C:0,'C#':1,D:2,'D#':3,E:4,F:5,'F#':6,G:7,'G#':8,A:9,'A#':10,B:11 };
+    const rootPc = NI[this._lockedKey] ?? 0;
+    let best = expected, bestScore = -1;
+    for (const cand of this._prog) {
+      let score = cand === expected ? 1.2 : 0; // bias toward the progression's flow
+      for (const m of recent) {
+        const pc = (((m - rootPc) % 12) + 12) % 12;
+        if (cand.some(o => ((o % 12) + 12) % 12 === pc)) score += 1;
+      }
+      if (score > bestScore) { bestScore = score; best = cand; }
+    }
+    return best;
   }
 
   _onBar(time) {
     this._barCount++;
+    this._applyPending();
     if (!this._prog || !this._lockedKey) return;
     const { bass, poly, mel, chordsCh, melCh } = this._tone;
     const rootMap = { C:'C3','C#':'C#3',D:'D3','D#':'D#3',E:'E3',F:'F3','F#':'F#3',G:'G3','G#':'G#3',A:'A3','A#':'A#3',B:'B3' };
     const chordRoot = rootMap[this._lockedKey] || 'C3';
-    const chord = this._prog[this._barCount % this._prog.length].map(n => Tone.Frequency(chordRoot).transpose(n).toNote());
-    const secPerBar = (60 / this._bpm) * 4;
+    const chord = this._pickLiveChord().map(n => Tone.Frequency(chordRoot).transpose(n).toNote());
+    const secPerBar = (60 / this._bpm) * this._beatsPerBar();
     // Fade channels in gradually
     if (chordsCh.gain.value < 0.99) chordsCh.gain.rampTo(1, 2);
     if (melCh.gain.value < 0.79 && this._barCount > 2) melCh.gain.rampTo(0.8, 2);
@@ -1327,11 +1521,14 @@ class LiveJamEngine {
     this._stream?.getTracks().forEach(t => t.stop());
     if (this._nativeAC) { try { await this._nativeAC.close(); } catch {} this._nativeAC = null; }
     this._disposeInstruments();
+    Tone.Transport.timeSignature = 4; // restore default for the offline generator
     const key = this._lockedKey || 'C', scale = this._lockedScale || 'major';
     const bpm = this._bpm, mood = this._mood, style = this._style;
-    const secPerBar = (60 / bpm) * 4, totalBars = Math.max(this._barCount, 4);
+    const beatsPerBar = this._beatsPerBar();
+    const secPerBar = (60 / bpm) * beatsPerBar, totalBars = Math.max(this._barCount, 4);
     const fakeAnalysis = {
       key, scale, bpm, mood, styleSuggestion: style,
+      meter: { beatsPerBar, label: this._meter, confidence: 1 },
       durationSec: totalBars * secPerBar,
       pitchContour: this._midiAccum.map((m, i) => ({ time: i * 0.25, midi: m, confidence: 0.8 })),
       phrases: Array.from({ length: totalBars }, (_, i) => ({ start: i * secPerBar, end: (i + 1) * secPerBar, energy: 0.6 })),
@@ -1351,8 +1548,15 @@ class PlaybackEngine {
     this._tempoRatio = 1;
     this._pitchSchedule = null;
     this._playerStartAT = 0;   // AudioContext time when playTogether started
+    this._sync = null;         // { firstBeatSec, beatSec } — beat-grid alignment info
+    this._duckGain = null;     // backing duck stage (melody/chords/arp)
+    this._duckPhrases = null;  // vocal phrases (original-recording time)
     this.chainMode = 'uninitialized';
   }
+  // Beat alignment: where the vocal's first beat falls, and the backing's beat length
+  setSync(sync) { this._sync = sync; }
+  // Ducking: dip the backing's mid-range under the child's sung phrases
+  setDucking(duckGain, phrases) { this._duckGain = duckGain; this._duckPhrases = phrases; }
   _disposeChain() {
     if (this._tonePlayer) { try { this._tonePlayer.dispose(); } catch(e) {} this._tonePlayer = null; }
     if (this._pitchShift) { try { this._pitchShift.dispose(); } catch(e) {} this._pitchShift = null; }
@@ -1409,20 +1613,51 @@ class PlaybackEngine {
     this.stop(); this.voice.currentTime = 0; await this.voice.play();
   }
   async playBacking() { await Tone.start(); this.stop(); Tone.Transport.position = 0; Tone.Transport.start(); }
+  // Delay (0..beatSec) that drops the vocal's first detected beat onto the backing's grid
+  _vocalBeatDelay() {
+    const s = this._sync;
+    if (!s || typeof s.firstBeatSec !== 'number' || !s.beatSec) return 0;
+    const fbWall = s.firstBeatSec / this._tempoRatio; // first-beat position after tempo stretch
+    let d = (s.beatSec - (fbWall % s.beatSec)) % s.beatSec;
+    if (d > s.beatSec * 0.92) d = 0; // already on the grid (within ~8% of a beat)
+    return d;
+  }
+  _scheduleDucking(vocalStartAT) {
+    if (!this._duckGain || !this._duckPhrases?.length) return;
+    const g = this._duckGain.gain;
+    g.cancelScheduledValues(Tone.now());
+    g.setValueAtTime(1, Tone.now());
+    for (const ph of this._duckPhrases) {
+      const s = vocalStartAT + ph.start / this._tempoRatio;
+      const e = vocalStartAT + ph.end / this._tempoRatio;
+      if (e - s < 0.2) continue;
+      g.setValueAtTime(1, Math.max(Tone.now(), s - 0.001));
+      g.linearRampToValueAtTime(0.6, s + 0.12);
+      g.setValueAtTime(0.6, e);
+      g.linearRampToValueAtTime(1, e + 0.3);
+    }
+  }
+  _resetDucking() {
+    if (!this._duckGain) return;
+    try { this._duckGain.gain.cancelScheduledValues(Tone.now()); this._duckGain.gain.setValueAtTime(1, Tone.now()); } catch {}
+  }
   async playTogether() {
     this.stop();
     this._ensureAudioChain();
     await Tone.start();
     if (!this._tonePlayer.loaded) await this._tonePlayer.load(this._voiceUrl);
     Tone.Transport.position = 0;
-    const startAt = Tone.now();
-    this._playerStartAT = startAt;
-    this._tonePlayer.start(startAt);
-    Tone.Transport.start();
+    const startAt = Tone.now() + 0.05; // small lookahead so vocal + backing start sample-aligned
+    const vocalStart = startAt + this._vocalBeatDelay();
+    this._playerStartAT = vocalStart;
+    this._tonePlayer.start(vocalStart);
+    this._scheduleDucking(vocalStart);
+    Tone.Transport.start(startAt);
     this._startPitchTracking();
   }
   stop() {
     this._stopPitchTracking();
+    this._resetDucking();
     this.voice.pause(); this.voice.currentTime = 0;
     if (this._tonePlayer) try { this._tonePlayer.stop(); } catch(e) {}
     if (this._pitchShift) this._pitchShift.pitch = 0;
@@ -1493,7 +1728,10 @@ function scaleForMood(mood) {
 }
 
 function applyTuning() {
-  if (!generatedResult || !analysis) return player.clearTuning();
+  if (!generatedResult || !analysis) { player.clearTuning(); player.setSync(null); player.setDucking(null, null); return; }
+  // Beat-grid sync + ducking apply regardless of the tuning sliders
+  player.setSync({ firstBeatSec: analysis.firstBeatSec ?? null, beatSec: generatedResult.beatSec ?? (60 / generatedResult.effectiveBpm) });
+  player.setDucking(generatedResult.duck ?? null, analysis.phrases ?? null);
   const autoTuneAmount = parseInt(document.getElementById('autoTuneToggle').value) / 100;
   const quantizeAmount = parseInt(document.getElementById('quantizeToggle').value) / 100;
   if (autoTuneAmount === 0 && quantizeAmount === 0) return player.clearTuning();
@@ -1569,6 +1807,8 @@ document.getElementById('melodyInstrument').onchange = regenIfIdle;
 document.getElementById('bassInstrument').onchange   = regenIfIdle;
 document.getElementById('drumKit').onchange          = regenIfIdle;
 document.getElementById('bpmInput').onchange         = regenIfIdle;
+document.getElementById('timeSigSelect').onchange    = regenIfIdle;
+document.getElementById('switchUpSelect').onchange   = regenIfIdle;
 
 analyzeBtn.onclick = async () => {
   if (!vocalBlob) return;
@@ -1616,10 +1856,12 @@ async function regenerate() {
   };
   try {
     const humanize = parseInt(document.getElementById('humanizeToggle').value) / 100;
-    const res = await generator.generate(analysis, { mood, style, length: lengthSelect.value, instruments, bpmOverride, humanize });
+    const timeSignature = document.getElementById('timeSigSelect').value;
+    const switchUp = document.getElementById('switchUpSelect').value;
+    const res = await generator.generate(analysis, { mood, style, length: lengthSelect.value, instruments, bpmOverride, humanize, timeSignature, switchUp });
     generatedResult = res;
     document.getElementById('bpmInput').value = res.effectiveBpm;
-    debug.backing = `generated (${res.bars} bars, ${res.totalSec.toFixed(1)}s, bpm:${res.effectiveBpm}, drums:${res.drumMode}, melody:${res.melodySource})`;
+    debug.backing = `generated (${res.bars} bars, ${res.totalSec.toFixed(1)}s, bpm:${res.effectiveBpm}, meter:${res.meter}${res.switchInfo ? `→${res.switchInfo.meter}/${res.switchInfo.style}@bar${res.switchInfo.bar}` : ''}, drums:${res.drumMode}, melody:${res.melodySource})`;
     debug.context = Tone.context.state;
     setDebug();
     stateMachine.set('generated');
@@ -1671,15 +1913,27 @@ startJamBtn.onclick = async () => {
   const bpm = (!isNaN(bpmVal) && bpmVal >= 40 && bpmVal <= 220) ? bpmVal : 90;
   const style = document.getElementById('jamStyleSelect').value.toLowerCase();
   const mood = document.getElementById('jamMoodSelect').value.toLowerCase();
+  const meter = document.getElementById('jamTimeSigSelect').value;
   try {
     await liveJam.start({
-      bpm, style, mood,
+      bpm, style, mood, meter,
       onUpdate: ({ status }) => { jamStatusEl.textContent = status; },
     });
   } catch (err) {
     jamStatusEl.textContent = 'Could not start jam: ' + (err.message || err);
     startJamBtn.disabled = false; stopJamBtn.disabled = true; recordBtn.disabled = false;
   }
+};
+
+// Live switch-ups: changing these mid-jam takes effect on the next bar boundary
+document.getElementById('jamStyleSelect').onchange = (e) => {
+  if (liveJam.running) { liveJam.setStyle(e.target.value.toLowerCase()); jamStatusEl.textContent = 'Style change queued for next bar…'; }
+};
+document.getElementById('jamMoodSelect').onchange = (e) => {
+  if (liveJam.running) { liveJam.setMood(e.target.value.toLowerCase()); jamStatusEl.textContent = 'Mood change queued for next bar…'; }
+};
+document.getElementById('jamTimeSigSelect').onchange = (e) => {
+  if (liveJam.running) { liveJam.setMeter(e.target.value); jamStatusEl.textContent = 'Time-signature change queued for next bar…'; }
 };
 
 stopJamBtn.onclick = async () => {
