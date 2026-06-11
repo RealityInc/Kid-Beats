@@ -94,11 +94,15 @@
               <option>Spooky</option><option>Silly</option><option>Epic</option>
             </select>
           </label>
+          <label>Time Sig
+            <select id="jamTimeSigSelect"><option value="4/4">4/4</option><option value="3/4">3/4</option></select>
+          </label>
           <label>BPM <input type="number" id="jamBpmInput" min="40" max="220" value="90" style="width:58px"></label>
           <button id="startJamBtn">▶ Start Jam</button>
           <button id="stopJamBtn" disabled>⏹ Stop &amp; Save</button>
         </div>
         <div id="jamStatus" class="muted" style="font-size:0.85rem;margin-top:4px;min-height:1.2em;"></div>
+        <div class="muted" style="font-size:0.78rem;margin-top:2px;">Tip: change Style, Mood, or Time Sig <em>while jamming</em> — the band switches on the next bar.</div>
       </div>
     </section>
 
@@ -149,6 +153,17 @@
           <select id="lengthSelect"><option value="match">Match vocal length</option><option value="30">30 seconds</option><option value="60">60 seconds</option></select>
         </label>
         <label>BPM <input type="number" id="bpmInput" min="40" max="220" step="1" style="width:60px" placeholder="Auto"></label>
+        <label>Time Sig
+          <select id="timeSigSelect"><option value="auto">Auto</option><option value="4/4">4/4</option><option value="3/4">3/4 (waltz)</option><option value="6/8">6/8</option></select>
+        </label>
+        <label>Switch-up
+          <select id="switchUpSelect" title="Sudden mid-song change of style or time signature">
+            <option value="none">None</option>
+            <option value="style">Style flip</option>
+            <option value="waltz">Waltz flip</option>
+            <option value="surprise">Surprise!</option>
+          </select>
+        </label>
         <button id="regenerateBtn">Regenerate</button>
       </div>
       <div class="card" style="margin:0 0 10px; padding:10px;">
@@ -217,7 +232,9 @@
     </section>
   </div>
 
-  <script src="https://unpkg.com/tone@14.8.49/build/Tone.js"></script>
+  <!-- Vendored locally so the app works offline / without CDN access -->
+  <script src="./vendor/Tone.js"></script>
+  <script>if (!window.Tone) document.write('<script src="https://unpkg.com/tone@14.8.49/build/Tone.js"><\/script>');</script>
   <script type="module" src="./mvp.js"></script>
 </body>
 </html>
