@@ -1,4 +1,6 @@
 import { analyzeSignal } from './analysis-core.js';
+import { instrumentFactory, samplesForSelection, chordSampleFor, MELODY_SAMPLES, BASS_SAMPLES, ATTRIBUTION } from './instruments.js';
+import { buildRenderSpec } from './render-backend.js';
 
 const MAX_RECORD_SEC = 60;
 
@@ -222,15 +224,17 @@ function pickProgression(analysis, mood, style, seed) {
 }
 
 function styleInstrumentDefaults(style, mood) {
-  if (style === 'country')       return { melody: 'pluck', bass: 'pluck', drums: 'clean' };
-  if (style === 'rock')          return { melody: 'lead',  bass: 'growl', drums: 'heavy' };
+  // Sampled real instruments are the default where they clearly win
+  // (pop/country/rock); electronic genres keep their synth character.
+  if (style === 'country')       return { melody: 'pluck', bass: 'electric', drums: 'acoustic' };
+  if (style === 'rock')          return { melody: 'lead',  bass: 'electric', drums: 'acoustic' };
   if (style === 'hip-hop')       return { melody: 'square',bass: 'sub',   drums: '808'   };
   if (style === 'dance')         return { melody: 'lead',  bass: 'square',drums: 'clean' };
   if (style === 'weird electro') return { melody: 'square',bass: 'growl', drums: 'heavy' };
   if (mood === 'spooky')         return { melody: 'bell',  bass: 'sub',   drums: 'heavy' };
-  if (mood === 'chill')          return { melody: 'bell',  bass: 'sub',   drums: 'lofi'  };
+  if (mood === 'chill')          return { melody: 'piano', bass: 'sub',   drums: 'lofi'  };
   if (mood === 'epic')           return { melody: 'lead',  bass: 'growl', drums: 'heavy' };
-  return { melody: 'pluck', bass: 'sub', drums: 'clean' };
+  return { melody: 'piano', bass: 'electric', drums: 'acoustic' };
 }
 
 class BackingTrackGenerator {
@@ -309,55 +313,82 @@ class BackingTrackGenerator {
       heavy: { kickOpts:{pitchDecay:0.06,octaves:6,envelope:{attack:0.001,decay:0.16,sustain:0}}, snareDecay:0.07, noiseType:'white' },
       '808': { kickOpts:{pitchDecay:0.32,octaves:9,envelope:{attack:0.001,decay:0.65,sustain:0}}, snareDecay:0.14, noiseType:'pink' },
     };
-    const kit = kitPresets[drumsKey];
-    const kickOpts = kit ? kit.kickOpts
-      : isHipHop ? { pitchDecay:0.18,octaves:9,envelope:{attack:0.001,decay:0.6,sustain:0} }
-      : isRock    ? { pitchDecay:0.06,octaves:5,envelope:{attack:0.001,decay:0.2,sustain:0} }
-      :              { pitchDecay:0.05,octaves:4 };
-    const snareDecay = kit ? kit.snareDecay : isRock ? 0.09 : 0.13;
-    const snareNoise = kit ? kit.noiseType  : isRock ? 'white' : 'pink';
-    const drum  = new Tone.MembraneSynth(kickOpts);
-    const snare = new Tone.NoiseSynth({ noise:{type:snareNoise}, envelope:{attack:0.001,decay:snareDecay,sustain:0} });
-    const hat   = new Tone.NoiseSynth({ noise:{type:'white'},    envelope:{attack:0.001,decay:0.05,sustain:0} });
+    // Sampled-vs-synth record per slot — surfaced in debug and tests
+    const sampled = { melody: 'synth', bass: 'synth', chords: 'synth', drums: 'synth' };
 
-    // Bass instrument — override with user selection or derive from style
-    const bassPresets = {
-      sub:   ['sine',     {attack:0.01,decay:0.5, sustain:0.7,release:0.5}],
-      growl: ['sawtooth', {attack:0.01,decay:0.2, sustain:0.8,release:0.3}],
-      square:['square',   {attack:0.01,decay:0.2, sustain:0.6,release:0.3}],
-      pluck: ['triangle', {attack:0.001,decay:0.4,sustain:0,  release:0.2}],
-    };
-    const bassP = bassPresets[bassKey];
-    const bassOscFinal = bassP ? bassP[0] : isHipHop ? 'sine' : (isRock||isElectro) ? 'sawtooth' : is4OnFloor ? 'square' : 'triangle';
-    const bassEnv  = bassP ? bassP[1] : {attack:0.01,decay:0.3,sustain:0.6,release:0.4};
-    const bass = new Tone.Synth({ oscillator:{type:bassOscFinal}, envelope:bassEnv });
+    // Drums: 'acoustic' uses real recorded hits; synth kits unchanged
+    let drum, snare, hat;
+    if (drumsKey === 'acoustic' && instrumentFactory.isLoaded('drumkit')) {
+      drum  = instrumentFactory.createKick();
+      snare = instrumentFactory.createDrumHit('snare');
+      hat   = instrumentFactory.createDrumHit('hatClosed');
+      sampled.drums = 'drumkit';
+    }
+    if (!drum || !snare || !hat) {
+      [drum, snare, hat].forEach(n => { try { n?.dispose(); } catch {} });
+      sampled.drums = 'synth';
+      const kit = kitPresets[drumsKey];
+      const kickOpts = kit ? kit.kickOpts
+        : isHipHop ? { pitchDecay:0.18,octaves:9,envelope:{attack:0.001,decay:0.6,sustain:0} }
+        : isRock    ? { pitchDecay:0.06,octaves:5,envelope:{attack:0.001,decay:0.2,sustain:0} }
+        :              { pitchDecay:0.05,octaves:4 };
+      const snareDecay = kit ? kit.snareDecay : isRock ? 0.09 : 0.13;
+      const snareNoise = kit ? kit.noiseType  : isRock ? 'white' : 'pink';
+      drum  = new Tone.MembraneSynth(kickOpts);
+      snare = new Tone.NoiseSynth({ noise:{type:snareNoise}, envelope:{attack:0.001,decay:snareDecay,sustain:0} });
+      hat   = new Tone.NoiseSynth({ noise:{type:'white'},    envelope:{attack:0.001,decay:0.05,sustain:0} });
+    }
 
-    // Chords — slow attack for atmospheric moods, sawtooth edge for rock, plucky strum for country
-    const chordAtk = isCountry ? 0.001 : mood === 'spooky' ? 2.0 : (mood === 'chill' || mood === 'sad') ? 1.0 : 0.04;
-    const chordOsc = isCountry ? 'triangle' : (mood === 'spooky' || mood === 'chill' || mood === 'sad') ? 'sine' : isRock ? 'sawtooth' : 'triangle';
-    const chordEnv = isCountry
-      ? { attack: 0.001, decay: 0.55, sustain: 0, release: 0.3 }  // guitar strum — zero sustain, natural decay
-      : { attack: chordAtk, decay: 0.4, sustain: 0.7, release: 1.2 };
-    const poly = new Tone.PolySynth(Tone.Synth, { oscillator:{type:chordOsc}, envelope:chordEnv });
+    // Bass: sampled electric bass when selected and loaded, else synth presets
+    let bass = BASS_SAMPLES[bassKey] ? instrumentFactory.createSampler(BASS_SAMPLES[bassKey]) : null;
+    if (bass) sampled.bass = BASS_SAMPLES[bassKey];
+    else {
+      const bassPresets = {
+        sub:   ['sine',     {attack:0.01,decay:0.5, sustain:0.7,release:0.5}],
+        growl: ['sawtooth', {attack:0.01,decay:0.2, sustain:0.8,release:0.3}],
+        square:['square',   {attack:0.01,decay:0.2, sustain:0.6,release:0.3}],
+        pluck: ['triangle', {attack:0.001,decay:0.4,sustain:0,  release:0.2}],
+      };
+      const bassP = bassPresets[bassKey];
+      const bassOscFinal = bassP ? bassP[0] : isHipHop ? 'sine' : (isRock||isElectro) ? 'sawtooth' : is4OnFloor ? 'square' : 'triangle';
+      const bassEnv  = bassP ? bassP[1] : {attack:0.01,decay:0.3,sustain:0.6,release:0.4};
+      bass = new Tone.Synth({ oscillator:{type:bassOscFinal}, envelope:bassEnv });
+    }
 
-    // Melody instrument — override with user selection or derive from style/mood
-    const melPresets = {
-      lead:  ['sawtooth', {attack:0.01, decay:0.1, sustain:0.7,release:0.2}],
-      pluck: ['triangle', {attack:0.001,decay:0.35,sustain:0,  release:0.1}],
-      bell:  ['sine',     {attack:0.001,decay:1.2, sustain:0,  release:0.5}],
-      flute: ['sine',     {attack:0.06, decay:0.1, sustain:0.7,release:0.3}],
-      square:['square',   {attack:0.01, decay:0.1, sustain:0.5,release:0.15}],
-    };
-    // Country uses Karplus-Strong (PluckSynth) for a realistic guitar pick sound
-    const isGuitarMelody = isCountry;
-    let melody;
-    if (isGuitarMelody) {
-      melody = new Tone.PluckSynth({ attackNoise: 1.0, dampening: 3000, resonance: 0.98 });
-    } else {
-      const melP = melPresets[melKey];
-      const melOsc = melP ? melP[0] : (isRock||isElectro) ? 'sawtooth' : (mood==='spooky'||mood==='sad') ? 'sine' : 'triangle';
-      const melEnv = melP ? melP[1] : {attack:0.02,decay:0.2,sustain:0.5,release:0.3};
-      melody = new Tone.Synth({ oscillator:{type:melOsc}, envelope:melEnv });
+    // Chords: genre-mapped sampled instrument (piano/guitar/organ), else synth pad
+    const chordSampleName = chordSampleFor(style, mood);
+    let poly = chordSampleName ? instrumentFactory.createSampler(chordSampleName) : null;
+    if (poly) sampled.chords = chordSampleName;
+    else {
+      // Slow attack for atmospheric moods, sawtooth edge for rock, plucky strum for country
+      const chordAtk = isCountry ? 0.001 : mood === 'spooky' ? 2.0 : (mood === 'chill' || mood === 'sad') ? 1.0 : 0.04;
+      const chordOsc = isCountry ? 'triangle' : (mood === 'spooky' || mood === 'chill' || mood === 'sad') ? 'sine' : isRock ? 'sawtooth' : 'triangle';
+      const chordEnv = isCountry
+        ? { attack: 0.001, decay: 0.55, sustain: 0, release: 0.3 }  // guitar strum — zero sustain, natural decay
+        : { attack: chordAtk, decay: 0.4, sustain: 0.7, release: 1.2 };
+      poly = new Tone.PolySynth(Tone.Synth, { oscillator:{type:chordOsc}, envelope:chordEnv });
+    }
+
+    // Melody: sampled instrument for piano/pluck/bell/flute selections, else synth
+    let melody = MELODY_SAMPLES[melKey] ? instrumentFactory.createSampler(MELODY_SAMPLES[melKey]) : null;
+    if (melody) sampled.melody = MELODY_SAMPLES[melKey];
+    else {
+      const melPresets = {
+        lead:  ['sawtooth', {attack:0.01, decay:0.1, sustain:0.7,release:0.2}],
+        pluck: ['triangle', {attack:0.001,decay:0.35,sustain:0,  release:0.1}],
+        bell:  ['sine',     {attack:0.001,decay:1.2, sustain:0,  release:0.5}],
+        flute: ['sine',     {attack:0.06, decay:0.1, sustain:0.7,release:0.3}],
+        square:['square',   {attack:0.01, decay:0.1, sustain:0.5,release:0.15}],
+      };
+      // Country uses Karplus-Strong (PluckSynth) for a guitar-ish pick sound
+      if (isCountry) {
+        melody = new Tone.PluckSynth({ attackNoise: 1.0, dampening: 3000, resonance: 0.98 });
+      } else {
+        const melP = melPresets[melKey];
+        const melOsc = melP ? melP[0] : (isRock||isElectro) ? 'sawtooth' : (mood==='spooky'||mood==='sad') ? 'sine' : 'triangle';
+        const melEnv = melP ? melP[1] : {attack:0.02,decay:0.2,sustain:0.5,release:0.3};
+        melody = new Tone.Synth({ oscillator:{type:melOsc}, envelope:melEnv });
+      }
     }
 
     // Atmospheric pad — lush long notes for spooky/chill/sad/epic
@@ -368,9 +399,12 @@ class BackingTrackGenerator {
     const useArp = (is4OnFloor || isElectro || mood === 'happy' || mood === 'silly') && !isCountry && !isRock;
     const arp = useArp ? new Tone.Synth({ oscillator: { type: isElectro ? 'sawtooth' : 'square' }, envelope: { attack: 0.005, decay: 0.1, sustain: 0.15, release: 0.08 } }) : null;
 
-    // Open-hat shimmer — metallic sustain for spooky/chill/sad breathing space
+    // Open-hat shimmer — real open hat with the acoustic kit, MetalSynth otherwise
     const useOpenHat = ['spooky', 'chill', 'sad'].includes(mood);
-    const openHat = useOpenHat ? new Tone.MetalSynth({ frequency: 400, envelope: { attack: 0.001, decay: 0.9, release: 0.5 }, resonance: 4000, harmonicity: 5.1, modulationIndex: 32, octaves: 1.5 }) : null;
+    const openHat = useOpenHat
+      ? ((sampled.drums === 'drumkit' ? instrumentFactory.createDrumHit('hatOpen') : null)
+         ?? new Tone.MetalSynth({ frequency: 400, envelope: { attack: 0.001, decay: 0.9, release: 0.5 }, resonance: 4000, harmonicity: 5.1, modulationIndex: 32, octaves: 1.5 }))
+      : null;
 
     // Effects — reverb and delay scale with mood atmosphere
     const reverbDecay = mood === 'spooky' ? 5.0 : mood === 'chill' ? 3.5 : mood === 'sad' ? 3.0 : 2.2;
@@ -412,7 +446,12 @@ class BackingTrackGenerator {
     // can bypass the duck stage and keep the foundation steady under the vocal
     const dist = isRock ? new Tone.Distortion(0.35) : null;
     const bassDist = isRock ? new Tone.Distortion(0.25) : null;
-    poly.connect(chordsCh); chordsCh.connect(panChords); bass.connect(bassCh);
+    // Sampled chord instruments carry real low-end — shelve it off so the
+    // bass register stays uncluttered
+    const chordEq = sampled.chords !== 'synth' ? new Tone.EQ3({ low: -8, lowFrequency: 200 }) : null;
+    poly.connect(chordsCh); bass.connect(bassCh);
+    if (chordEq) { chordsCh.connect(chordEq); chordEq.connect(panChords); }
+    else         { chordsCh.connect(panChords); }
     if (dist) { panChords.connect(dist); dist.connect(duckCh); }
     else      { panChords.connect(duckCh); }
     if (bassDist) { bassCh.connect(bassDist); bassDist.connect(bus); }
@@ -439,6 +478,7 @@ class BackingTrackGenerator {
     if (vibrato) this._nodes.push(vibrato);
     if (dist) this._nodes.push(dist);
     if (bassDist) this._nodes.push(bassDist);
+    if (chordEq) this._nodes.push(chordEq);
     if (padCh) this._nodes.push(padCh);
     if (arpCh) this._nodes.push(arpCh);
     if (pad) this._nodes.push(pad);
@@ -796,10 +836,13 @@ class BackingTrackGenerator {
     const channels = { melody:melCh, bass:bassCh, chords:chordsCh, kick:kickCh, perc:percCh,
                        ...(padCh ? {pad:padCh} : {}), ...(arpCh ? {arp:arpCh} : {}) };
     const synths = { melody, bass, poly, drum, snare, hat };
+    const sampledSlots = Object.entries(sampled).filter(([, v]) => v !== 'synth').map(([k, v]) => `${k}=${v}`);
+    const instrSummary = sampledSlots.length ? sampledSlots.join('+') : 'synth-fallback';
     return { bars, totalSec, effectiveBpm, beatSec,
              meter: baseMeter, switchAtSec: switchBar > 0 ? plan[switchBar].t : null,
              switchInfo: switchBar > 0 ? { bar: switchBar, style: altStyle, meter: altMeter } : null,
-             duck: duckCh,
+             duck: duckCh, plan, sampled, instrSummary,
+             style, mood, fx: { reverbDecay, reverbWet, swing: Tone.Transport.swing },
              drumMode: isHalfTime ? 'half-time' : isDoubletime ? 'double-time' : 'standard',
              melodySource, tracks, channels, synths, scalePcs };
   }
@@ -1311,6 +1354,11 @@ class LiveJamEngine {
     this._recorder = new MediaRecorder(this._stream, mimeType ? { mimeType } : undefined);
     this._recorder.ondataavailable = (e) => { if (e.data.size) this._chunks.push(e.data); };
     this._recorder.start(250);
+    // Warm the sampled band (cached after the first jam); on timeout the jam
+    // simply starts with synth instruments
+    onUpdate?.({ status: 'Warming up the band…', keyLocked: false });
+    const jamDefs = styleInstrumentDefaults(style, mood);
+    try { await instrumentFactory.preload(samplesForSelection(jamDefs, style, mood), { timeoutMs: 5000 }); } catch {}
     this._buildInstruments();
     Tone.Transport.stop(); Tone.Transport.cancel();
     Tone.Transport.bpm.value = bpm;
@@ -1328,14 +1376,22 @@ class LiveJamEngine {
     const delay = new Tone.PingPongDelay('8n', 0.12);
     const limiter = new Tone.Limiter(-1).toDestination();
     const bus = new Tone.Gain(0.85).chain(reverb, delay, limiter);
-    const drum  = new Tone.MembraneSynth(isHipHop
-      ? { pitchDecay:0.18, octaves:9, envelope:{attack:0.001,decay:0.6,sustain:0} }
-      : { pitchDecay:0.05, octaves:4, envelope:{attack:0.001,decay:0.28,sustain:0} });
-    const snare = new Tone.NoiseSynth({ noise:{type:'pink'}, envelope:{attack:0.001,decay:0.13,sustain:0} });
-    const hat   = new Tone.NoiseSynth({ noise:{type:'white'}, envelope:{attack:0.001,decay:0.05,sustain:0} });
-    const bass  = new Tone.Synth({ oscillator:{type:isHipHop?'sine':isRock?'sawtooth':'triangle'}, envelope:{attack:0.01,decay:0.3,sustain:0.6,release:0.4} });
-    const poly  = new Tone.PolySynth(Tone.Synth, { oscillator:{type:'triangle'}, envelope:{attack:0.04,decay:0.4,sustain:0.7,release:1.2} });
-    const mel   = new Tone.Synth({ oscillator:{type:'triangle'}, envelope:{attack:0.02,decay:0.2,sustain:0.5,release:0.3} });
+    // Real sampled band where the genre wants it; electronic genres stay synth
+    const useSamples = !['hip-hop', 'dance', 'weird electro'].includes(this._style);
+    const drum = (useSamples ? instrumentFactory.createKick() : null)
+      ?? new Tone.MembraneSynth(isHipHop
+        ? { pitchDecay:0.18, octaves:9, envelope:{attack:0.001,decay:0.6,sustain:0} }
+        : { pitchDecay:0.05, octaves:4, envelope:{attack:0.001,decay:0.28,sustain:0} });
+    const snare = (useSamples ? instrumentFactory.createDrumHit('snare') : null)
+      ?? new Tone.NoiseSynth({ noise:{type:'pink'}, envelope:{attack:0.001,decay:0.13,sustain:0} });
+    const hat = (useSamples ? instrumentFactory.createDrumHit('hatClosed') : null)
+      ?? new Tone.NoiseSynth({ noise:{type:'white'}, envelope:{attack:0.001,decay:0.05,sustain:0} });
+    const bass = (useSamples ? instrumentFactory.createSampler('bass-electric') : null)
+      ?? new Tone.Synth({ oscillator:{type:isHipHop?'sine':isRock?'sawtooth':'triangle'}, envelope:{attack:0.01,decay:0.3,sustain:0.6,release:0.4} });
+    const poly = (useSamples ? instrumentFactory.createSampler(this._style === 'country' ? 'guitar-acoustic' : this._style === 'rock' ? 'guitar-electric' : 'piano') : null)
+      ?? new Tone.PolySynth(Tone.Synth, { oscillator:{type:'triangle'}, envelope:{attack:0.04,decay:0.4,sustain:0.7,release:1.2} });
+    const mel = (useSamples ? instrumentFactory.createSampler('piano') : null)
+      ?? new Tone.Synth({ oscillator:{type:'triangle'}, envelope:{attack:0.02,decay:0.2,sustain:0.5,release:0.3} });
     const kickCh = new Tone.Gain(1), bassCh = new Tone.Gain(1), percCh = new Tone.Gain(1);
     const chordsCh = new Tone.Gain(0); // fades in after key detected
     const melCh    = new Tone.Gain(0); // fades in after key locked
@@ -1751,6 +1807,12 @@ function applyTuning() {
 
 function showScreen(id) { document.querySelectorAll('.screen').forEach((s)=>s.classList.remove('active')); document.getElementById(id).classList.add('active'); }
 function setStatus(t) { statusEl.textContent = t; }
+function setInstStatus(t) { const el = document.getElementById('instStatus'); if (el) el.textContent = t; }
+
+// Warm the default sample set in the background so the first generate is instant
+setTimeout(() => { instrumentFactory.preload(['piano', 'bass-electric', 'drumkit']).catch(() => {}); }, 500);
+// CC-BY attribution for the vendored instrument samples
+{ const el = document.getElementById('sampleCredits'); if (el) el.textContent = ATTRIBUTION; }
 function setVocal(blob) { vocalBlob = blob; if (vocalUrl) URL.revokeObjectURL(vocalUrl); vocalUrl = URL.createObjectURL(blob); player.setVoiceUrl(vocalUrl); debug.blobSize = blob.size; debug.audioUrl = vocalUrl; setDebug(); document.getElementById('playVoiceBtn').disabled = false; document.getElementById('analyzeBtn').disabled = false; }
 
 recordBtn.onclick = async () => {
@@ -1858,10 +1920,27 @@ async function regenerate() {
     const humanize = parseInt(document.getElementById('humanizeToggle').value) / 100;
     const timeSignature = document.getElementById('timeSigSelect').value;
     const switchUp = document.getElementById('switchUpSelect').value;
+
+    // Load the sample sets this selection needs (cached after first time);
+    // failures just mean those slots fall back to synths.
+    const styleDefs = styleInstrumentDefaults(style, mood);
+    const resolved = {
+      melody: instruments.melody === 'auto' ? styleDefs.melody : instruments.melody,
+      bass:   instruments.bass   === 'auto' ? styleDefs.bass   : instruments.bass,
+      drums:  instruments.drums  === 'auto' ? styleDefs.drums  : instruments.drums,
+    };
+    setInstStatus('Loading instruments…');
+    await instrumentFactory.preload(samplesForSelection(resolved, style, mood), {
+      onProgress: (done, total) => setInstStatus(`Loading instruments… ${done}/${total}`),
+    });
+    setInstStatus(instrumentFactory.status().failed.length ? 'Using synth sounds for some instruments' : 'Instruments ready');
+
     const res = await generator.generate(analysis, { mood, style, length: lengthSelect.value, instruments, bpmOverride, humanize, timeSignature, switchUp });
     generatedResult = res;
+    generatedResult.renderSpec = buildRenderSpec(analysis, { mood, style, instruments: resolved, timeSignature, switchUp }, res);
+    debug.renderSpec = `${JSON.stringify(generatedResult.renderSpec).length} bytes`;
     document.getElementById('bpmInput').value = res.effectiveBpm;
-    debug.backing = `generated (${res.bars} bars, ${res.totalSec.toFixed(1)}s, bpm:${res.effectiveBpm}, meter:${res.meter}${res.switchInfo ? `→${res.switchInfo.meter}/${res.switchInfo.style}@bar${res.switchInfo.bar}` : ''}, drums:${res.drumMode}, melody:${res.melodySource})`;
+    debug.backing = `generated (${res.bars} bars, ${res.totalSec.toFixed(1)}s, bpm:${res.effectiveBpm}, meter:${res.meter}${res.switchInfo ? `→${res.switchInfo.meter}/${res.switchInfo.style}@bar${res.switchInfo.bar}` : ''}, drums:${res.drumMode}, melody:${res.melodySource}, instr:${res.instrSummary})`;
     debug.context = Tone.context.state;
     setDebug();
     stateMachine.set('generated');

@@ -67,6 +67,9 @@ await page.click('#generateBtn');
 await page.waitForSelector('#screen-generated.active', { timeout: 15000 });
 let dbg = JSON.parse(await page.textContent('#debug'));
 check('generate succeeds', /^generated/.test(dbg.backing), dbg.backing);
+check('sampled instruments used', /instr:(?!synth-fallback)/.test(dbg.backing), dbg.backing);
+check('instrument status ready', /Instruments ready/.test(await page.textContent('#instStatus')), await page.textContent('#instStatus'));
+check('renderSpec built', /\d+ bytes/.test(dbg.renderSpec || ''), String(dbg.renderSpec));
 check('track lanes rendered', await page.locator('.track-lane').count() >= 4);
 
 await page.click('#playTogetherBtn');
@@ -114,6 +117,27 @@ dbg = JSON.parse(await page.textContent('#debug'));
 check('jam: backing generated on save', /^jam/.test(dbg.backing), dbg.backing);
 
 check('no page errors during run', errors.length === 0, errors.join(' | '));
+
+// Forced sample failure: block every sample fetch in a fresh context and make
+// sure the whole pipeline still works on synth fallback.
+const ctx2 = await browser.newContext();
+const p2 = await ctx2.newPage();
+await p2.route('**/vendor/samples/**/*.mp3', r => r.abort());
+await p2.goto('http://localhost:8765/');
+await p2.setInputFiles('#uploadInput', join(root, 'tests', 'fixtures-test-vocal.wav'));
+await p2.waitForFunction(() => !document.getElementById('analyzeBtn').disabled);
+await p2.click('#analyzeBtn');
+await p2.waitForSelector('#screen-analysis.active', { timeout: 15000 });
+await p2.click('#generateBtn');
+await p2.waitForSelector('#screen-generated.active', { timeout: 20000 });
+const dbg2 = JSON.parse(await p2.textContent('#debug'));
+check('fallback: generation succeeds without samples', /^generated/.test(dbg2.backing), dbg2.backing);
+check('fallback: synths used', /instr:synth-fallback/.test(dbg2.backing), dbg2.backing);
+check('fallback: status mentions synth sounds', /synth sounds/i.test(await p2.textContent('#instStatus')), await p2.textContent('#instStatus'));
+await p2.click('#playTogetherBtn');
+await p2.waitForTimeout(1200);
+check('fallback: play-together runs', (await p2.evaluate(() => Tone.Transport.state)) === 'started');
+await ctx2.close();
 
 await browser.close();
 server.close();

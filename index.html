@@ -167,21 +167,26 @@
         <button id="regenerateBtn">Regenerate</button>
       </div>
       <div class="card" style="margin:0 0 10px; padding:10px;">
-        <div style="font-weight:bold;margin-bottom:8px;">Instruments</div>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;">
+          <span style="font-weight:bold;">Instruments</span>
+          <span id="instStatus" class="muted" style="font-size:0.78rem;"></span>
+        </div>
         <div class="row" style="margin-bottom:6px;">
           <label style="flex:1;min-width:120px;">&#127925; Melody
             <select id="melodyInstrument" style="width:100%">
               <option value="auto">Auto</option>
-              <option value="lead">Lead synth</option>
-              <option value="pluck">Pluck</option>
-              <option value="bell">Bell</option>
+              <option value="piano">Piano</option>
+              <option value="pluck">Guitar (plucked)</option>
               <option value="flute">Flute</option>
+              <option value="bell">Xylophone</option>
+              <option value="lead">Lead synth</option>
               <option value="square">Square wave</option>
             </select>
           </label>
           <label style="flex:1;min-width:120px;">&#127928; Bass
             <select id="bassInstrument" style="width:100%">
               <option value="auto">Auto</option>
+              <option value="electric">Electric bass</option>
               <option value="sub">Sub bass</option>
               <option value="growl">Growl</option>
               <option value="square">Square</option>
@@ -191,6 +196,7 @@
           <label style="flex:1;min-width:120px;">&#129345; Drums
             <select id="drumKit" style="width:100%">
               <option value="auto">Auto</option>
+              <option value="acoustic">Acoustic kit</option>
               <option value="clean">Clean</option>
               <option value="lofi">Lo-fi</option>
               <option value="heavy">Heavy</option>
@@ -229,6 +235,7 @@
     <section class="card">
       <h2>Debug</h2>
       <pre id="debug"></pre>
+      <div id="sampleCredits" class="muted" style="font-size:0.72rem;"></div>
     </section>
   </div>
 
